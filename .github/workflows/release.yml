@@ -7,15 +7,22 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   release:
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
         run: cargo test --verbose
@@ -26,20 +33,33 @@ jobs:
       - name: Build menu bar app
         run: bash menubar/build.sh
 
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Update Info.plist version
+      - name: Stamp version in Info.plist
         run: |
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" menubar/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" menubar/RustyBackMenu.app/Contents/Info.plist
+          VER="${{ steps.version.outputs.VERSION }}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" menubar/RustyBackMenu.app/Contents/Info.plist
+          echo "✅ Version stamped: $VER"
 
       - name: Build installer package
         run: |
+          VER="${{ steps.version.outputs.VERSION }}"
+          # Update version in build-pkg.sh
+          sed -i '' "s/VERSION=\".*\"/VERSION=\"$VER\"/" build-pkg.sh
           bash build-pkg.sh
-          mv "RustyMacBackup-${{ steps.version.outputs.VERSION }}.pkg" \
-             "RustyMacBackup-${{ steps.version.outputs.VERSION }}-arm64.pkg"
+
+      - name: Rename package
+        run: |
+          VER="${{ steps.version.outputs.VERSION }}"
+          mv "RustyMacBackup-${VER}.pkg" "RustyMacBackup-${VER}-arm64.pkg"
+          ls -lh "RustyMacBackup-${VER}-arm64.pkg"
+
+      - name: Verify all artifacts
+        run: |
+          VER="${{ steps.version.outputs.VERSION }}"
+          test -f target/release/rustyback || { echo "❌ binary missing"; exit 1; }
+          test -f "RustyMacBackup-${VER}-arm64.pkg" || { echo "❌ pkg missing"; exit 1; }
+          echo "✅ All release artifacts ready"
+          echo "   Binary: $(ls -lh target/release/rustyback | awk '{print $5}')"
+          echo "   Package: $(ls -lh RustyMacBackup-${VER}-arm64.pkg | awk '{print $5}')"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

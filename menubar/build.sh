@@ -43,8 +43,10 @@ fi
 
 echo "📦 Bundle created: ${BUNDLE}"
 
-# Copy to /Applications
-if [ -w "${INSTALL_DIR}" ]; then
+# Copy to /Applications (skip in CI)
+if [ -n "${CI:-}" ]; then
+    echo "📦 CI mode — skipping install to ${INSTALL_DIR}"
+elif [ -w "${INSTALL_DIR}" ]; then
     rm -rf "${INSTALL_DIR}/${APP_NAME}.app"
     cp -R "${BUNDLE}" "${INSTALL_DIR}/${APP_NAME}.app"
     echo "📲 Installed to ${INSTALL_DIR}/${APP_NAME}.app"
