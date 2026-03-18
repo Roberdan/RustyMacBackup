@@ -729,6 +729,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var currentStatus: BackupStatus?
     private var previousState: String = "idle"
+    private var wasDiskConnected: Bool = false
     private var scheduleIntervalMinutes: Int = 60
     private var scheduleEnabled: Bool = true
     private var cachedConfig: ParsedConfig = ParsedConfig()
@@ -760,6 +761,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         readScheduleState()
         reloadConfig()
+        wasDiskConnected = isDiskConnected  // Initialize before first poll
         pollStatus()
         schedulePollTimer(interval: 30)
         requestNotificationPermission()
@@ -894,8 +896,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentStatus = status
         previousState = status.state
 
+        // Detect disk reconnection
+        let diskNow = isDiskConnected
+        let diskJustReconnected = diskNow && !wasDiskConnected
+        wasDiskConnected = diskNow
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+
+            // Auto-resume backup if disk reconnected and last backup was interrupted
+            if diskJustReconnected && status.state != "running" {
+                if status.state == "error" || self.isBackupStale(status) {
+                    self.sendNotification(title: "Disco ricollegato",
+                                          body: "Riavvio backup automatico...")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        self.backupNow()
+                    }
+                }
+            }
 
             switch status.state {
             case "running":
