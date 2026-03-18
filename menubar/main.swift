@@ -356,10 +356,22 @@ enum DiskInfo {
         }
 
         let url = URL(fileURLWithPath: volumeRoot)
-        guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
-              let free = values.volumeAvailableCapacityForImportantUsage else {
-            return nil
+        var free: Int64 = 0
+        if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+           let cap = values.volumeAvailableCapacityForImportantUsage, cap > 0 {
+            free = cap
+        } else if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey]),
+                  let cap = values.volumeAvailableCapacity, cap > 0 {
+            free = Int64(cap)
+        } else {
+            // Fallback: use df command
+            let dfOutput = Shell.run("df -k '\(volumeRoot)' | tail -1 | awk '{print $4}'")
+            if let kb = Int64(dfOutput.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                free = kb * 1024
+            }
         }
+
+        guard free > 0 else { return nil }
 
         let encrypted = VolumeScanner.checkEncryption(volumeRoot)
         return DiskDetail(volumeName: volumeName, freeSpace: Fmt.bytes(free), isEncrypted: encrypted)
