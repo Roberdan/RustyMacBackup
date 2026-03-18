@@ -146,47 +146,84 @@ fn cmd_init() -> Result<()> {
     if config_path.exists() {
         println!("{} Config already exists: {}", "⚠".yellow(), config_path.display());
         println!("   Run `rustyback config edit` to modify it.");
+        println!("   Run `rustyback init --force` to reconfigure from scratch.");
         return Ok(());
     }
 
-    println!("{}", "🦀 RustyMacBackup Setup".bold().cyan());
-    println!();
-
-    // Detect home directory
+    let total_steps = 6;
     let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
-    println!("  Source: {}", home.green());
+    let terminal_name = std::env::var("TERM_PROGRAM").unwrap_or_else(|_| "Terminal".to_string());
 
-    // Discover available external volumes
     println!();
-    println!("{}", "Scanning for backup disks...".dimmed());
+    println!("{}", "🦀 RustyMacBackup — First Time Setup".bold().cyan());
+    println!("{}", "━".repeat(50).dimmed());
+    println!();
+
+    // =========================================================================
+    // Step 1: Check Full Disk Access
+    // =========================================================================
+    println!("{} Checking Full Disk Access...", step_label(1, total_steps));
+    
+    // Try reading a TCC-protected path to verify FDA
+    let fda_ok = std::fs::read_dir(format!("{}/Library/Mail", home)).is_ok() 
+        || std::fs::read_dir(format!("{}/Library/Messages", home)).is_ok()
+        || std::fs::metadata(format!("{}/Library/Safari", home)).is_ok();
+
+    if !fda_ok {
+        println!();
+        println!("  {} {} needs Full Disk Access to back up your data.", "⚠".yellow().bold(), terminal_name.bold());
+        println!();
+        println!("  How to enable:");
+        println!("  1. Open {} → {} → {} → {}",
+            "System Settings".bold(),
+            "Privacy & Security".bold(),
+            "Full Disk Access".bold(),
+            terminal_name.bold()
+        );
+        println!("  2. Toggle {} {}", terminal_name.bold(), "ON".green().bold());
+        println!("  3. Restart {} and run {} again", terminal_name.bold(), "rustyback init".cyan());
+        println!();
+        anyhow::bail!("Full Disk Access required. See instructions above.");
+    }
+    println!("  {} Full Disk Access granted", "✅".green());
+
+    // =========================================================================
+    // Step 2: Discover disks
+    // =========================================================================
+    println!("{} Scanning for backup disks...", step_label(2, total_steps));
     let volumes = discover_volumes()?;
 
     if volumes.is_empty() {
-        anyhow::bail!(
-            "No external disks found!\n\
-             Connect an external drive and run `rustyback init` again."
-        );
+        println!();
+        println!("  {} No external disks found!", "❌".red());
+        println!();
+        println!("  Connect an external drive and run {} again.", "rustyback init".cyan());
+        anyhow::bail!("No backup disk available.");
     }
 
     // Show volume menu
     println!();
-    println!("{}", "Available disks:".bold());
-    for (i, (name, path, size)) in volumes.iter().enumerate() {
-        println!("  {}. {} — {} free ({})", 
-            (i + 1).to_string().cyan(), 
+    for (i, (name, _path, size, encrypted)) in volumes.iter().enumerate() {
+        let lock = if *encrypted { 
+            format!("{}", "🔒 encrypted".green())
+        } else { 
+            format!("{}", "⚠ NOT encrypted".red().bold())
+        };
+        println!("  {}. {} — {} free — {}", 
+            (i + 1).to_string().cyan().bold(), 
             name.bold(), 
             format_bytes(*size),
-            path.display().to_string().dimmed()
+            lock,
         );
     }
     println!();
 
     // Ask user to pick
     let choice = if volumes.len() == 1 {
-        println!("Only one disk found, using: {}", volumes[0].0.bold());
+        println!("  Using: {}", volumes[0].0.bold());
         0
     } else {
-        print!("Select disk [1-{}]: ", volumes.len());
+        print!("  Select disk [1-{}]: ", volumes.len());
         std::io::Write::flush(&mut std::io::stdout())?;
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -197,36 +234,110 @@ fn cmd_init() -> Result<()> {
         num - 1
     };
 
-    let (_vol_name, vol_path, _) = &volumes[choice];
+    let (vol_name, vol_path, _, encrypted) = &volumes[choice];
+
+    // =========================================================================
+    // Step 3: Check encryption
+    // =========================================================================
+    println!("{} Verifying disk encryption...", step_label(3, total_steps));
+
+    if !encrypted {
+        println!();
+        println!("  {} {} is NOT encrypted!", "🔒".to_string(), vol_name.bold().red());
+        println!();
+        println!("  RustyMacBackup requires encryption to protect your data.");
+        println!();
+        println!("  How to encrypt:");
+        println!("  1. Open {}", "Finder".bold());
+        println!("  2. Right-click {} in the sidebar", vol_name.bold());
+        println!("  3. Select {}", "Encrypt…".bold());
+        println!("  4. Choose a strong password and wait for encryption to complete");
+        println!("  5. Run {} again", "rustyback init".cyan());
+        println!();
+        anyhow::bail!("Disk encryption required. See instructions above.");
+    }
+    println!("  {} {} is encrypted (FileVault)", "✅".green(), vol_name);
+
     let backup_dir = vol_path.join("RustyMacBackup");
 
-    // Create backup directory and fix permissions
-    println!();
-    println!("  Creating {} ...", backup_dir.display().to_string().cyan());
+    // =========================================================================
+    // Step 4: Set up backup folder and permissions
+    // =========================================================================
+    println!("{} Setting up backup folder...", step_label(4, total_steps));
     ensure_writable_dir(&backup_dir)?;
+    println!("  {} {}", "✅".green(), backup_dir.display());
 
-    // Generate config
+    // =========================================================================
+    // Step 5: Generate config
+    // =========================================================================
+    println!("{} Creating configuration...", step_label(5, total_steps));
+
     let config_content = generate_default_config(&home, &backup_dir);
-
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&config_path, &config_content)?;
+    println!("  {} {}", "✅".green(), config_path.display().to_string().dimmed());
+
+    // =========================================================================
+    // Step 6: Summary and next steps
+    // =========================================================================
+    println!("{} Setup complete!", step_label(6, total_steps));
 
     println!();
     println!("{}", "━".repeat(50).dimmed());
-    println!("{} Setup complete!", "✅".green());
-    println!("  Source:  {}", home.green());
-    println!("  Dest:    {}", backup_dir.display().to_string().green());
-    println!("  Config:  {}", config_path.display().to_string().dimmed());
+    println!("{}", "🦀 RustyMacBackup is ready!".bold().green());
+    println!("{}", "━".repeat(50).dimmed());
     println!();
-    println!("  Run {} to start your first backup", "rustyback backup".bold());
-    println!("  Run {} to enable automatic hourly backups", "rustyback schedule on".bold());
+    println!("  {} {}", "Source:".bold(), home);
+    println!("  {} /Applications, /opt/homebrew, /etc, /Library", "System:".bold());
+    println!("  {} {}", "Dest:".bold(), backup_dir.display().to_string().green());
+    println!("  {} config.toml", "Config:".bold());
+    println!();
+    println!("{}", "What's next:".bold());
+    println!("  {} {} {}", "1.".cyan(), "rustyback backup".bold(), "— run your first backup now");
+    println!("  {} {} {}", "2.".cyan(), "rustyback schedule on".bold(), "— enable automatic hourly backups");
+    println!("  {} {} {}", "3.".cyan(), "rustyback config excludes".bold(), "— review what's excluded");
+    println!();
+    println!("  For automatic backups, also add {} to Full Disk Access:",
+        "rustyback".bold());
+    println!("  {}", format!("{}/.local/bin/rustyback", home).dimmed());
+    println!();
+
+    // Offer to run first backup now
+    print!("  Run first backup now? [Y/n]: ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let answer = input.trim().to_lowercase();
+    if answer.is_empty() || answer == "y" || answer == "yes" {
+        println!();
+        drop(input);
+        let config = config::Config::load(&config_path)?;
+        let start = std::time::Instant::now();
+        let stats = backup::run_backup(&config)?;
+        let elapsed = start.elapsed();
+
+        println!();
+        println!("{}", "━".repeat(50).dimmed());
+        println!("{}", "First backup complete!".bold().green());
+        println!("  {} files hard-linked", stats.files_hardlinked.to_string().cyan());
+        println!("  {} files copied", stats.files_copied.to_string().yellow());
+        println!("  {} total", format_bytes(stats.bytes_copied));
+        println!("  ⏱  {:.1}s", elapsed.as_secs_f64());
+        if !stats.errors.is_empty() {
+            println!("  {} errors (permission denied on protected files — normal)", stats.errors.len());
+        }
+    }
 
     Ok(())
 }
 
-fn discover_volumes() -> Result<Vec<(String, PathBuf, u64)>> {
+fn step_label(step: u32, total: u32) -> String {
+    format!("\n  {} ", format!("[{}/{}]", step, total).cyan().bold())
+}
+
+fn discover_volumes() -> Result<Vec<(String, PathBuf, u64, bool)>> {
     let mut volumes = Vec::new();
     let volumes_dir = std::path::Path::new("/Volumes");
 
@@ -251,13 +362,66 @@ fn discover_volumes() -> Result<Vec<(String, PathBuf, u64)>> {
         // Get free space
         let free = get_volume_free_space(&path).unwrap_or(0);
         if free > 0 {
-            volumes.push((name, path, free));
+            let encrypted = is_volume_encrypted(&path);
+            volumes.push((name, path, free, encrypted));
         }
     }
 
     // Sort by name
     volumes.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(volumes)
+}
+
+/// Check if a volume is encrypted (APFS encrypted or FileVault/CoreStorage)
+fn is_volume_encrypted(path: &std::path::Path) -> bool {
+    let output = std::process::Command::new("diskutil")
+        .args(["info", &path.to_string_lossy()])
+        .output();
+
+    match output {
+        Ok(out) => {
+            let info = String::from_utf8_lossy(&out.stdout);
+            // Check for APFS encryption or FileVault
+            info.lines().any(|line| {
+                let line = line.trim();
+                (line.starts_with("FileVault:") && line.contains("Yes"))
+                    || (line.starts_with("Encrypted:") && line.contains("Yes"))
+                    || (line.contains("Encryption Type:") && !line.contains("None"))
+            })
+        }
+        Err(_) => false,
+    }
+}
+
+/// Verify the destination volume is encrypted; bail if not
+fn require_encrypted_volume(dest: &std::path::Path) -> Result<()> {
+    // Find the volume mount point (e.g. /Volumes/RoberdanBCK 1)
+    let volume_path = if dest.starts_with("/Volumes") {
+        // Extract /Volumes/<name>
+        let components: Vec<_> = dest.components().collect();
+        if components.len() >= 3 {
+            PathBuf::from("/Volumes").join(components[2].as_os_str())
+        } else {
+            dest.to_path_buf()
+        }
+    } else {
+        dest.to_path_buf()
+    };
+
+    if !is_volume_encrypted(&volume_path) {
+        anyhow::bail!(
+            "🔒 Security: backup destination is NOT encrypted!\n\n\
+             Volume: {}\n\n\
+             RustyMacBackup requires an encrypted disk to protect your data.\n\
+             To encrypt this disk:\n\
+             1. Open Finder → right-click the disk → Encrypt\n\
+             2. Set a strong password\n\
+             3. Wait for encryption to complete\n\
+             4. Run `rustyback init` again",
+            volume_path.display()
+        );
+    }
+    Ok(())
 }
 
 fn get_volume_free_space(path: &std::path::Path) -> Result<u64> {
@@ -290,29 +454,29 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
         Err(_) => {} // Fall through to sudo
     }
 
-    // Need elevated permissions — use sudo
+    // Need elevated permissions
     println!();
     println!("  {} This disk requires admin permissions for the first setup.", "🔑".to_string());
     println!("  You'll be asked for your password once. This won't be needed again.");
     println!();
 
-    // Fix parent volume permissions
-    if let Some(parent) = path.parent() {
-        std::process::Command::new("sudo")
-            .args(["chmod", "775", &parent.to_string_lossy()])
-            .status()?;
-        let user = std::env::var("USER").unwrap_or_else(|_| "roberdan".to_string());
-        std::process::Command::new("sudo")
-            .args(["chown", &format!("{}:staff", user), &parent.to_string_lossy()])
-            .status()?;
-    }
-
-    // Create and set permissions on backup dir
-    std::fs::create_dir_all(path)?;
-    let user = std::env::var("USER").unwrap_or_else(|_| "roberdan".to_string());
+    // Create dir with sudo (works on APFS regardless of Owners setting)
     std::process::Command::new("sudo")
-        .args(["chown", "-R", &format!("{}:staff", user), &path.to_string_lossy()])
+        .args(["mkdir", "-p", &path.to_string_lossy()])
         .status()?;
+
+    // Set permissions so our user can write without sudo from now on
+    // Use chmod instead of chown — works even when Owners is disabled on APFS
+    std::process::Command::new("sudo")
+        .args(["chmod", "777", &path.to_string_lossy()])
+        .status()?;
+
+    // Also try to enable ownership on the volume (may fail silently, that's OK)
+    if let Some(parent) = path.parent() {
+        let _ = std::process::Command::new("sudo")
+            .args(["diskutil", "enableOwnership", &parent.to_string_lossy()])
+            .output(); // ignore errors — not all volumes support this
+    }
 
     // Verify
     let test_file = path.join(".rmb-write-test");
