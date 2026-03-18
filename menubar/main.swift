@@ -115,23 +115,243 @@ enum Shell {
     }
 }
 
+// MARK: - Config Manager
+
+struct ParsedConfig {
+    var sourcePath: String = ""
+    var extraPaths: [String] = []
+    var destPath: String = ""
+    var excludePatterns: [String] = []
+    var hourly: Int = 24
+    var daily: Int = 30
+    var weekly: Int = 52
+    var monthly: Int = 0
+
+    var allSourcePaths: [String] {
+        var paths = [sourcePath]
+        paths.append(contentsOf: extraPaths)
+        return paths.filter { !$0.isEmpty }
+    }
+}
+
+enum ConfigManager {
+    private static let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+    static let configPath = "\(home)/.config/rusty-mac-backup/config.toml"
+
+    static func load() -> ParsedConfig {
+        guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
+            return ParsedConfig()
+        }
+        return parseTOML(content)
+    }
+
+    private static func parseTOML(_ content: String) -> ParsedConfig {
+        var config = ParsedConfig()
+        var section = ""
+        var inArray = false
+        var arrayKey = ""
+        var arrayValues: [String] = []
+
+        for rawLine in content.components(separatedBy: "\n") {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                if inArray && trimmed.hasPrefix("#") { continue }
+                if !inArray { continue }
+                continue
+            }
+
+            if trimmed.hasPrefix("[") && !trimmed.hasPrefix("[[") && trimmed.hasSuffix("]") && !inArray {
+                section = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+                continue
+            }
+
+            if inArray {
+                if trimmed.hasPrefix("]") {
+                    switch "\(section).\(arrayKey)" {
+                    case "source.extra_paths": config.extraPaths = arrayValues
+                    case "exclude.patterns": config.excludePatterns = arrayValues
+                    default: break
+                    }
+                    inArray = false
+                    arrayValues = []
+                    continue
+                }
+                if let val = extractQuoted(trimmed) {
+                    arrayValues.append(val)
+                }
+                continue
+            }
+
+            guard let eqIdx = trimmed.firstIndex(of: "=") else { continue }
+            let key = String(trimmed[..<eqIdx]).trimmingCharacters(in: .whitespaces)
+            var value = String(trimmed[trimmed.index(after: eqIdx)...]).trimmingCharacters(in: .whitespaces)
+
+            if let commentRange = value.range(of: " #") {
+                value = String(value[..<commentRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+
+            if value.hasPrefix("[") && !value.hasSuffix("]") {
+                inArray = true
+                arrayKey = key
+                arrayValues = []
+                continue
+            }
+
+            if value.hasPrefix("[") && value.hasSuffix("]") {
+                let inner = String(value.dropFirst().dropLast())
+                let vals = inner.components(separatedBy: ",").compactMap { extractQuoted($0) }
+                switch "\(section).\(key)" {
+                case "source.extra_paths": config.extraPaths = vals
+                case "exclude.patterns": config.excludePatterns = vals
+                default: break
+                }
+                continue
+            }
+
+            switch "\(section).\(key)" {
+            case "source.path": config.sourcePath = extractQuoted(value) ?? value
+            case "destination.path": config.destPath = extractQuoted(value) ?? value
+            case "retention.hourly": config.hourly = Int(value) ?? 24
+            case "retention.daily": config.daily = Int(value) ?? 30
+            case "retention.weekly": config.weekly = Int(value) ?? 52
+            case "retention.monthly": config.monthly = Int(value) ?? 0
+            default: break
+            }
+        }
+        return config
+    }
+
+    private static func extractQuoted(_ s: String) -> String? {
+        let t = s.trimmingCharacters(in: CharacterSet(charactersIn: " ,\t"))
+        guard t.count >= 2, t.hasPrefix("\""), t.hasSuffix("\"") else { return nil }
+        return String(t.dropFirst().dropLast())
+    }
+
+    // MARK: Extra Paths Management
+
+    static func addExtraPath(_ path: String) {
+        guard var content = try? String(contentsOfFile: configPath, encoding: .utf8) else { return }
+        if let range = content.range(of: "extra_paths") {
+            var searchStart = range.upperBound
+            if let bracketStart = content.range(of: "[", range: searchStart..<content.endIndex) {
+                searchStart = bracketStart.upperBound
+            }
+            if let closeRange = content.range(of: "]", range: searchStart..<content.endIndex) {
+                let insertion = "    \"\(path)\",\n"
+                content.insert(contentsOf: insertion, at: closeRange.lowerBound)
+                try? content.write(toFile: configPath, atomically: true, encoding: .utf8)
+            }
+        } else {
+            // No extra_paths yet — add after the path line in [source]
+            let searchStart: String.Index
+            if let sourceRange = content.range(of: "[source]") {
+                searchStart = sourceRange.upperBound
+            } else {
+                searchStart = content.startIndex
+            }
+            if let pathLine = content.range(of: "path = ", range: searchStart..<content.endIndex) {
+                if let lineEnd = content.range(of: "\n", range: pathLine.upperBound..<content.endIndex) {
+                    let insertion = "extra_paths = [\n    \"\(path)\",\n]\n"
+                    content.insert(contentsOf: insertion, at: lineEnd.upperBound)
+                    try? content.write(toFile: configPath, atomically: true, encoding: .utf8)
+                }
+            }
+        }
+    }
+
+    static func removeExtraPath(_ path: String) {
+        guard var content = try? String(contentsOfFile: configPath, encoding: .utf8) else { return }
+        let escaped = path.replacingOccurrences(of: "/", with: "\\/")
+        let _ = escaped // suppress unused warning
+        let patterns = [
+            "    \"\(path)\",\n",
+            "    \"\(path)\"\n",
+            "    \"\(path)\",",
+            "    \"\(path)\"",
+        ]
+        for p in patterns {
+            if content.contains(p) {
+                content = content.replacingOccurrences(of: p, with: "")
+                break
+            }
+        }
+        try? content.write(toFile: configPath, atomically: true, encoding: .utf8)
+    }
+}
+
+// MARK: - Volume Scanner
+
+struct VolumeInfo {
+    let name: String
+    let path: String
+    let freeSpace: Int64
+    let isEncrypted: Bool
+
+    var freeSpaceFormatted: String { Fmt.bytes(freeSpace) }
+    var encryptionIcon: String { isEncrypted ? "🔒" : "⚠️" }
+}
+
+enum VolumeScanner {
+    static func connectedVolumes() -> [VolumeInfo] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: "/Volumes") else { return [] }
+
+        return entries.sorted().compactMap { name -> VolumeInfo? in
+            guard !name.hasPrefix("."),
+                  name != "Macintosh HD",
+                  name != "Recovery" else { return nil }
+            let volumePath = "/Volumes/\(name)"
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: volumePath, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+            let url = URL(fileURLWithPath: volumePath)
+            let free: Int64
+            if let vals = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+               let f = vals.volumeAvailableCapacityForImportantUsage {
+                free = f
+            } else {
+                free = 0
+            }
+
+            let encrypted = checkEncryption(volumePath)
+            return VolumeInfo(name: name, path: volumePath, freeSpace: free, isEncrypted: encrypted)
+        }
+    }
+
+    static func checkEncryption(_ volumePath: String) -> Bool {
+        let output = Shell.run("diskutil info \"\(volumePath)\" 2>/dev/null")
+        let lower = output.lowercased()
+        return lower.contains("filevault: yes")
+            || lower.contains("encrypted: yes")
+            || (lower.contains("file system personality") && lower.contains("encrypted"))
+    }
+}
+
 // MARK: - Disk Info
 
-enum DiskInfo {
-    static func freeSpace() -> String? {
-        let configOutput = Shell.run("rustyback config show 2>/dev/null | grep -E '\"[/]' | head -1")
-        let components = configOutput.components(separatedBy: "\"")
-        var path: String? = nil
-        for c in components {
-            if c.hasPrefix("/") { path = c; break }
-        }
-        guard let mountPath = path else { return nil }
+struct DiskDetail {
+    let volumeName: String
+    let freeSpace: String
+    let isEncrypted: Bool
 
+    var summary: String {
+        "\(volumeName) — \(freeSpace) free \(isEncrypted ? "🔒" : "⚠️")"
+    }
+}
+
+enum DiskInfo {
+    static func detail(for config: ParsedConfig) -> DiskDetail? {
+        let destPath = config.destPath
+        guard !destPath.isEmpty else { return nil }
+
+        let volumeName: String
         let volumeRoot: String
-        if mountPath.hasPrefix("/Volumes/") {
-            let parts = mountPath.split(separator: "/", maxSplits: 3)
-            volumeRoot = parts.count >= 2 ? "/Volumes/\(parts[1])" : mountPath
+        if destPath.hasPrefix("/Volumes/") {
+            let parts = destPath.split(separator: "/", maxSplits: 3)
+            volumeName = parts.count >= 2 ? String(parts[1]) : "Unknown"
+            volumeRoot = "/Volumes/\(volumeName)"
         } else {
+            volumeName = "Macintosh HD"
             volumeRoot = "/"
         }
 
@@ -140,7 +360,13 @@ enum DiskInfo {
               let free = values.volumeAvailableCapacityForImportantUsage else {
             return nil
         }
-        return Fmt.bytes(free)
+
+        let encrypted = VolumeScanner.checkEncryption(volumeRoot)
+        return DiskDetail(volumeName: volumeName, freeSpace: Fmt.bytes(free), isEncrypted: encrypted)
+    }
+
+    static func freeSpace() -> String? {
+        return detail(for: ConfigManager.load())?.freeSpace
     }
 }
 
@@ -156,8 +382,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var previousState: String = "idle"
     private var scheduleIntervalMinutes: Int = 60
     private var scheduleEnabled: Bool = true
-    private var cachedDiskFree: String?
-    private var diskFreeLastChecked: Date = .distantPast
+    private var cachedConfig: ParsedConfig = ParsedConfig()
+    private var cachedDiskDetail: DiskDetail?
+    private var diskDetailLastChecked: Date = .distantPast
 
     private let statusFilePath: String = {
         let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
@@ -169,7 +396,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         readScheduleState()
-        refreshDiskFree()
+        reloadConfig()
         pollStatus()
         schedulePollTimer(interval: 30)
         requestNotificationPermission()
@@ -377,16 +604,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Schedule section
-        addScheduleSection(to: menu)
+        // Schedule submenu
+        addScheduleSubmenu(to: menu)
 
         menu.addItem(NSMenuItem.separator())
 
-        // Config
-        let editItem = NSMenuItem(title: "  Edit Config…", action: #selector(editConfig), keyEquivalent: ",")
-        editItem.keyEquivalentModifierMask = .command
-        editItem.target = self
-        menu.addItem(editItem)
+        // Preferences submenu
+        addPreferencesSubmenu(to: menu)
+
+        menu.addItem(NSMenuItem.separator())
 
         let logItem = NSMenuItem(title: "  View Backup Log", action: #selector(viewLog), keyEquivalent: "")
         logItem.target = self
@@ -425,10 +651,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(durItem)
         }
 
-        // Disk free
-        refreshDiskFreeIfStale()
-        if let free = cachedDiskFree {
-            let diskItem = NSMenuItem(title: "Disk: \(free) free", action: nil, keyEquivalent: "")
+        // Disk info with volume name and encryption
+        refreshDiskDetailIfStale()
+        if let detail = cachedDiskDetail {
+            let diskItem = NSMenuItem(title: "Disk: \(detail.summary)", action: nil, keyEquivalent: "")
             diskItem.isEnabled = false
             menu.addItem(diskItem)
         }
@@ -494,17 +720,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func addScheduleSection(to menu: NSMenu) {
-        let label = scheduleEnabled
-            ? "Schedule: Every \(scheduleIntervalMinutes) min  ✓"
+    private func addScheduleSubmenu(to menu: NSMenu) {
+        let schedLabel = scheduleEnabled
+            ? "Schedule: Every \(scheduleIntervalMinutes) min"
             : "Schedule: Disabled"
-        let schedItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
-        schedItem.isEnabled = false
-        menu.addItem(schedItem)
-
-        // Change Interval submenu
-        let changeItem = NSMenuItem(title: "  Change Interval…", action: nil, keyEquivalent: "")
+        let schedItem = NSMenuItem(title: "  \(schedLabel)", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
+
         for mins in [15, 30, 60, 120] {
             let label = mins < 60 ? "Every \(mins) min" : "Every \(mins / 60) hour\(mins > 60 ? "s" : "")"
             let item = NSMenuItem(title: label, action: #selector(changeInterval(_:)), keyEquivalent: "")
@@ -515,34 +737,267 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             submenu.addItem(item)
         }
-        changeItem.submenu = submenu
-        menu.addItem(changeItem)
 
-        // Disable/Enable
-        let toggleItem: NSMenuItem
+        submenu.addItem(NSMenuItem.separator())
+
         if scheduleEnabled {
-            toggleItem = NSMenuItem(title: "  Disable Schedule", action: #selector(disableSchedule), keyEquivalent: "")
+            let disableItem = NSMenuItem(title: "Disable", action: #selector(disableSchedule), keyEquivalent: "")
+            disableItem.target = self
+            submenu.addItem(disableItem)
         } else {
-            toggleItem = NSMenuItem(title: "  Enable Schedule", action: #selector(enableSchedule), keyEquivalent: "")
+            let enableItem = NSMenuItem(title: "Enable", action: #selector(enableSchedule), keyEquivalent: "")
+            enableItem.target = self
+            submenu.addItem(enableItem)
         }
-        toggleItem.target = self
-        menu.addItem(toggleItem)
+
+        schedItem.submenu = submenu
+        menu.addItem(schedItem)
     }
 
-    // MARK: Disk Free (cached)
+    // MARK: Preferences Submenu
 
-    private func refreshDiskFreeIfStale() {
-        if -diskFreeLastChecked.timeIntervalSinceNow > 300 { // refresh every 5 min
-            refreshDiskFree()
-        }
+    private func addPreferencesSubmenu(to menu: NSMenu) {
+        let prefsItem = NSMenuItem(title: "  Preferences", action: nil, keyEquivalent: ",")
+        prefsItem.keyEquivalentModifierMask = .command
+        let prefsMenu = NSMenu()
+
+        // Backup Disk >
+        let diskItem = NSMenuItem(title: "Backup Disk", action: nil, keyEquivalent: "")
+        diskItem.submenu = buildBackupDiskSubmenu()
+        prefsMenu.addItem(diskItem)
+
+        // Source Paths >
+        let sourcesItem = NSMenuItem(title: "Source Paths", action: nil, keyEquivalent: "")
+        sourcesItem.submenu = buildSourcePathsSubmenu()
+        prefsMenu.addItem(sourcesItem)
+
+        // Excludes >
+        let excludesItem = NSMenuItem(title: "Excludes", action: nil, keyEquivalent: "")
+        excludesItem.submenu = buildExcludesSubmenu()
+        prefsMenu.addItem(excludesItem)
+
+        // Retention >
+        let retentionItem = NSMenuItem(title: "Retention", action: nil, keyEquivalent: "")
+        retentionItem.submenu = buildRetentionSubmenu()
+        prefsMenu.addItem(retentionItem)
+
+        prefsItem.submenu = prefsMenu
+        menu.addItem(prefsItem)
     }
 
-    private func refreshDiskFree() {
+    private func buildBackupDiskSubmenu() -> NSMenu {
+        let sub = NSMenu()
+        let volumes = VolumeScanner.connectedVolumes()
+        let currentDest = cachedConfig.destPath
+
+        if volumes.isEmpty {
+            let noDisks = NSMenuItem(title: "No external disks found", action: nil, keyEquivalent: "")
+            noDisks.isEnabled = false
+            sub.addItem(noDisks)
+        } else {
+            for vol in volumes {
+                let label = "\(vol.name) — \(vol.freeSpaceFormatted) \(vol.encryptionIcon)"
+                let item = NSMenuItem(title: label, action: #selector(selectBackupDisk(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = vol.path as NSString
+                if currentDest.hasPrefix(vol.path) {
+                    item.state = .on
+                }
+                sub.addItem(item)
+            }
+        }
+
+        return sub
+    }
+
+    private func buildSourcePathsSubmenu() -> NSMenu {
+        let sub = NSMenu()
+        let paths = cachedConfig.allSourcePaths
+
+        // Show current paths as disabled info items
+        for path in paths {
+            let item = NSMenuItem(title: path, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            sub.addItem(item)
+        }
+
+        sub.addItem(NSMenuItem.separator())
+
+        // Add Path...
+        let addItem = NSMenuItem(title: "Add Path…", action: #selector(addSourcePath), keyEquivalent: "")
+        addItem.target = self
+        sub.addItem(addItem)
+
+        // Remove Path >
+        if !cachedConfig.extraPaths.isEmpty {
+            let removeItem = NSMenuItem(title: "Remove Path", action: nil, keyEquivalent: "")
+            let removeSub = NSMenu()
+            for path in cachedConfig.extraPaths {
+                let item = NSMenuItem(title: path, action: #selector(removeSourcePath(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = path as NSString
+                removeSub.addItem(item)
+            }
+            removeItem.submenu = removeSub
+            sub.addItem(removeItem)
+        }
+
+        return sub
+    }
+
+    private func buildExcludesSubmenu() -> NSMenu {
+        let sub = NSMenu()
+        let patterns = cachedConfig.excludePatterns
+
+        // Count
+        let countItem = NSMenuItem(title: "\(patterns.count) patterns active", action: nil, keyEquivalent: "")
+        countItem.isEnabled = false
+        sub.addItem(countItem)
+
+        sub.addItem(NSMenuItem.separator())
+
+        // Add Exclude...
+        let addItem = NSMenuItem(title: "Add Exclude…", action: #selector(addExcludePattern), keyEquivalent: "")
+        addItem.target = self
+        sub.addItem(addItem)
+
+        // Remove Exclude >
+        if !patterns.isEmpty {
+            let removeItem = NSMenuItem(title: "Remove Exclude", action: nil, keyEquivalent: "")
+            let removeSub = NSMenu()
+            for pattern in patterns {
+                let item = NSMenuItem(title: pattern, action: #selector(removeExcludePattern(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = pattern as NSString
+                removeSub.addItem(item)
+            }
+            removeItem.submenu = removeSub
+            sub.addItem(removeItem)
+        }
+
+        sub.addItem(NSMenuItem.separator())
+
+        // Common Excludes >
+        let commonItem = NSMenuItem(title: "Common Excludes", action: nil, keyEquivalent: "")
+        commonItem.submenu = buildCommonExcludesSubmenu()
+        sub.addItem(commonItem)
+
+        return sub
+    }
+
+    private func buildCommonExcludesSubmenu() -> NSMenu {
+        let sub = NSMenu()
+        let current = Set(cachedConfig.excludePatterns)
+        let presets: [(String, Bool)] = [
+            ("node_modules", true),
+            (".git/objects", true),
+            ("OneDrive*", true),
+            ("Library/Caches", true),
+            ("Downloads", false),
+            ("Movies", false),
+            (".ollama/models", false),
+        ]
+
+        for (pattern, _) in presets {
+            let isActive = current.contains(pattern)
+            let item = NSMenuItem(title: pattern, action: #selector(toggleCommonExclude(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = pattern as NSString
+            item.state = isActive ? .on : .off
+            sub.addItem(item)
+        }
+
+        return sub
+    }
+
+    private func buildRetentionSubmenu() -> NSMenu {
+        let sub = NSMenu()
+        let cfg = cachedConfig
+
+        let hourlyLabel = "Hourly: \(cfg.hourly)"
+        let hourlyItem = NSMenuItem(title: hourlyLabel, action: nil, keyEquivalent: "")
+        let hourlySub = NSMenu()
+        for val in [6, 12, 24, 48] {
+            let item = NSMenuItem(title: "\(val)", action: #selector(changeRetentionHourly(_:)), keyEquivalent: "")
+            item.tag = val
+            item.target = self
+            if val == cfg.hourly { item.state = .on }
+            hourlySub.addItem(item)
+        }
+        hourlyItem.submenu = hourlySub
+        sub.addItem(hourlyItem)
+
+        let dailyLabel = "Daily: \(cfg.daily)"
+        let dailyItem = NSMenuItem(title: dailyLabel, action: nil, keyEquivalent: "")
+        let dailySub = NSMenu()
+        for val in [7, 14, 30, 60] {
+            let item = NSMenuItem(title: "\(val)", action: #selector(changeRetentionDaily(_:)), keyEquivalent: "")
+            item.tag = val
+            item.target = self
+            if val == cfg.daily { item.state = .on }
+            dailySub.addItem(item)
+        }
+        dailyItem.submenu = dailySub
+        sub.addItem(dailyItem)
+
+        let weeklyLabel = "Weekly: \(cfg.weekly)"
+        let weeklyItem = NSMenuItem(title: weeklyLabel, action: nil, keyEquivalent: "")
+        let weeklySub = NSMenu()
+        for val in [12, 26, 52, 104] {
+            let item = NSMenuItem(title: "\(val)", action: #selector(changeRetentionWeekly(_:)), keyEquivalent: "")
+            item.tag = val
+            item.target = self
+            if val == cfg.weekly { item.state = .on }
+            weeklySub.addItem(item)
+        }
+        weeklyItem.submenu = weeklySub
+        sub.addItem(weeklyItem)
+
+        let monthlyDisplay = cfg.monthly == 0 ? "forever" : "\(cfg.monthly)"
+        let monthlyLabel = "Monthly: \(monthlyDisplay)"
+        let monthlyItem = NSMenuItem(title: monthlyLabel, action: nil, keyEquivalent: "")
+        let monthlySub = NSMenu()
+        for val in [6, 12, 0] {
+            let label = val == 0 ? "forever" : "\(val)"
+            let item = NSMenuItem(title: label, action: #selector(changeRetentionMonthly(_:)), keyEquivalent: "")
+            item.tag = val
+            item.target = self
+            if val == cfg.monthly { item.state = .on }
+            monthlySub.addItem(item)
+        }
+        monthlyItem.submenu = monthlySub
+        sub.addItem(monthlyItem)
+
+        return sub
+    }
+
+    // MARK: Config & Disk Caching
+
+    private func reloadConfig() {
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let free = DiskInfo.freeSpace()
+            let config = ConfigManager.load()
+            let detail = DiskInfo.detail(for: config)
             DispatchQueue.main.async {
-                self?.cachedDiskFree = free
-                self?.diskFreeLastChecked = Date()
+                self?.cachedConfig = config
+                self?.cachedDiskDetail = detail
+                self?.diskDetailLastChecked = Date()
+                self?.buildMenu()
+            }
+        }
+    }
+
+    private func refreshDiskDetailIfStale() {
+        if -diskDetailLastChecked.timeIntervalSinceNow > 300 {
+            refreshDiskDetail()
+        }
+    }
+
+    private func refreshDiskDetail() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let detail = DiskInfo.detail(for: self?.cachedConfig ?? ConfigManager.load())
+            DispatchQueue.main.async {
+                self?.cachedDiskDetail = detail
+                self?.diskDetailLastChecked = Date()
             }
         }
     }
@@ -617,18 +1072,141 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
     }
 
-    @objc private func editConfig() {
-        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-        let configPath = "\(home)/.config/rusty-mac-backup/config.toml"
-        if FileManager.default.fileExists(atPath: configPath) {
-            NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
-        } else {
-            Shell.runAsync("rustyback config path 2>/dev/null") { output in
-                let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !path.isEmpty && FileManager.default.fileExists(atPath: path) {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    @objc private func selectBackupDisk(_ sender: NSMenuItem) {
+        guard let volumePath = sender.representedObject as? String else { return }
+        let destPath = "\(volumePath)/RustyMacBackup"
+
+        // Check encryption
+        let vol = VolumeScanner.connectedVolumes().first { $0.path == volumePath }
+        if let v = vol, !v.isEncrypted {
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Disk Not Encrypted"
+                alert.informativeText = """
+                \(v.name) is not encrypted. Your backups will be stored unencrypted.
+
+                To encrypt: open Disk Utility → select \(v.name) → File → Encrypt "\(v.name)…"
+
+                Or use Finder: right-click the disk → Encrypt "\(v.name)…"
+                """
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Use Anyway")
+                alert.addButton(withTitle: "Cancel")
+                NSApp.activate(ignoringOtherApps: true)
+                let response = alert.runModal()
+                if response != .alertFirstButtonReturn { return }
+
+                Shell.runAsync("rustyback config dest \"\(destPath)\" 2>&1") { [weak self] _ in
+                    self?.reloadConfig()
                 }
             }
+            return
+        }
+
+        Shell.runAsync("rustyback config dest \"\(destPath)\" 2>&1") { [weak self] _ in
+            self?.reloadConfig()
+        }
+    }
+
+    @objc private func addSourcePath() {
+        DispatchQueue.main.async { [weak self] in
+            let panel = NSOpenPanel()
+            panel.title = "Select Source Directory"
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = false
+            NSApp.activate(ignoringOtherApps: true)
+
+            if panel.runModal() == .OK, let url = panel.url {
+                let path = url.path
+                DispatchQueue.global(qos: .userInitiated).async {
+                    ConfigManager.addExtraPath(path)
+                    DispatchQueue.main.async {
+                        self?.reloadConfig()
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func removeSourcePath(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            ConfigManager.removeExtraPath(path)
+            DispatchQueue.main.async {
+                self?.reloadConfig()
+            }
+        }
+    }
+
+    @objc private func addExcludePattern() {
+        DispatchQueue.main.async { [weak self] in
+            let alert = NSAlert()
+            alert.messageText = "Add Exclude Pattern"
+            alert.informativeText = "Enter a glob pattern to exclude from backups.\nExamples: *.log, Downloads, .cache"
+            alert.addButton(withTitle: "Add")
+            alert.addButton(withTitle: "Cancel")
+
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            input.placeholderString = "pattern (e.g. *.log)"
+            alert.accessoryView = input
+            alert.window.initialFirstResponder = input
+            NSApp.activate(ignoringOtherApps: true)
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                let pattern = input.stringValue.trimmingCharacters(in: .whitespaces)
+                guard !pattern.isEmpty else { return }
+                Shell.runAsync("rustyback config exclude \"\(pattern)\" 2>&1") { _ in
+                    self?.reloadConfig()
+                }
+            }
+        }
+    }
+
+    @objc private func removeExcludePattern(_ sender: NSMenuItem) {
+        guard let pattern = sender.representedObject as? String else { return }
+        Shell.runAsync("rustyback config include \"\(pattern)\" 2>&1") { [weak self] _ in
+            self?.reloadConfig()
+        }
+    }
+
+    @objc private func toggleCommonExclude(_ sender: NSMenuItem) {
+        guard let pattern = sender.representedObject as? String else { return }
+        let isCurrentlyActive = cachedConfig.excludePatterns.contains(pattern)
+        if isCurrentlyActive {
+            Shell.runAsync("rustyback config include \"\(pattern)\" 2>&1") { [weak self] _ in
+                self?.reloadConfig()
+            }
+        } else {
+            Shell.runAsync("rustyback config exclude \"\(pattern)\" 2>&1") { [weak self] _ in
+                self?.reloadConfig()
+            }
+        }
+    }
+
+    @objc private func changeRetentionHourly(_ sender: NSMenuItem) {
+        Shell.runAsync("rustyback config retention --hourly \(sender.tag) 2>&1") { [weak self] _ in
+            self?.reloadConfig()
+        }
+    }
+
+    @objc private func changeRetentionDaily(_ sender: NSMenuItem) {
+        Shell.runAsync("rustyback config retention --daily \(sender.tag) 2>&1") { [weak self] _ in
+            self?.reloadConfig()
+        }
+    }
+
+    @objc private func changeRetentionWeekly(_ sender: NSMenuItem) {
+        Shell.runAsync("rustyback config retention --weekly \(sender.tag) 2>&1") { [weak self] _ in
+            self?.reloadConfig()
+        }
+    }
+
+    @objc private func changeRetentionMonthly(_ sender: NSMenuItem) {
+        Shell.runAsync("rustyback config retention --monthly \(sender.tag) 2>&1") { [weak self] _ in
+            self?.reloadConfig()
         }
     }
 
