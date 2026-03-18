@@ -206,35 +206,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         stopAnimation()
         guard let button = statusItem.button else { return }
 
+        let symbolName: String
         if hasError {
-            if let img = loadBundleIcon("icon-warning") {
-                button.image = img
-                button.title = ""
-            } else {
-                button.image = nil
-                button.title = "✕"
-            }
+            symbolName = "externaldrive.badge.xmark"
         } else if stale {
-            if let img = loadBundleIcon("icon-warning") {
-                button.image = img
-                button.title = ""
-            } else {
-                button.image = nil
-                button.title = "◐"
-            }
+            symbolName = "externaldrive.badge.exclamationmark"
         } else {
-            if let img = loadBundleIcon("icon-idle") {
-                button.image = img
-                button.title = ""
-            } else if let img = NSImage(systemSymbolName: "externaldrive.badge.checkmark",
-                                        accessibilityDescription: "RustyMacBackup") {
-                img.isTemplate = true
-                button.image = img
-                button.title = ""
-            } else {
-                button.image = nil
-                button.title = "●"
-            }
+            symbolName = "externaldrive.fill.badge.checkmark"
+        }
+
+        if let img = NSImage(systemSymbolName: symbolName,
+                              accessibilityDescription: "RustyMacBackup") {
+            img.isTemplate = true
+            button.image = img
+            button.title = ""
+        } else {
+            button.image = nil
+            button.title = hasError ? "⚠" : "💾"
         }
     }
 
@@ -242,31 +230,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard animationTimer == nil else { return }
         animationFrame = 0
 
-        let iconRunning = loadBundleIcon("icon-running")
-        let iconIdle = loadBundleIcon("icon-idle")
+        // Use SF Symbol for sync animation
+        let syncImg = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
+                               accessibilityDescription: "Backing up")
+        let driveImg = NSImage(systemSymbolName: "externaldrive.fill",
+                                accessibilityDescription: "Backing up")
+        syncImg?.isTemplate = true
+        driveImg?.isTemplate = true
 
-        if iconRunning != nil {
-            // Alternate between running and idle icons
-            animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                guard let self = self, let button = self.statusItem.button else { return }
-                self.animationFrame = (self.animationFrame + 1) % 2
-                button.image = self.animationFrame == 0 ? iconRunning : iconIdle
-                button.title = ""
-            }
-            // Set initial frame
-            if let button = statusItem.button {
-                button.image = iconRunning
-                button.title = ""
-            }
-        } else {
-            // Fallback: rotating quarter-circle emoji
-            let frames = ["◐", "◓", "◑", "◒"]
-            animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                guard let self = self, let button = self.statusItem.button else { return }
-                self.animationFrame = (self.animationFrame + 1) % frames.count
-                button.image = nil
-                button.title = frames[self.animationFrame]
-            }
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+            guard let self = self, let button = self.statusItem.button else { return }
+            self.animationFrame = (self.animationFrame + 1) % 2
+            button.image = self.animationFrame == 0 ? syncImg : driveImg
+            button.title = ""
+        }
+        if let button = statusItem.button {
+            button.image = syncImg
+            button.title = ""
         }
     }
 
@@ -365,7 +345,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.autoenablesItems = false
 
         // Header
-        let header = NSMenuItem(title: "🦀 RustyMacBackup", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "RustyMacBackup", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
