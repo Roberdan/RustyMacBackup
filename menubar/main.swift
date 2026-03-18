@@ -1347,10 +1347,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        // Try reading a TCC-protected directory
+        // Try to list contents of a TCC-protected directory
+        // If FDA is not granted, this will return nil/empty
         let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-        return FileManager.default.isReadableFile(atPath: "\(home)/Library/Mail")
-            || FileManager.default.isReadableFile(atPath: "\(home)/Library/Safari")
+        let testPaths = ["\(home)/Library/Safari", "\(home)/Library/Mail", "\(home)/Library/Messages"]
+        for path in testPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                if let contents = try? FileManager.default.contentsOfDirectory(atPath: path) {
+                    return !contents.isEmpty || true // directory exists and is listable = FDA OK
+                }
+                // Can't list = no FDA
+                return false
+            }
+        }
+        // None of the test dirs exist — assume FDA is OK (can't determine)
+        return true
     }
 
     // MARK: Notifications
