@@ -10,7 +10,20 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(name = "rustyback", version, about = "🦀 RustyMacBackup — Fast incremental backups with hard links")]
+#[command(name = "rustyback", version, about = "🦀 RustyMacBackup — Fast incremental backups with hard links",
+    after_help = "\x1b[1mQuick Reference:\x1b[0m
+  rustyback init                  First-time setup wizard
+  rustyback backup                Run backup now
+  rustyback stop                  Stop a running backup
+  rustyback status                Show last backup, ETA if running
+  rustyback list                  List all backup snapshots
+  rustyback restore <name> <path> Restore a file from a backup
+  rustyback config show           Show current configuration
+  rustyback config exclude <pat>  Add exclude pattern
+  rustyback schedule on           Enable hourly automatic backup
+  rustyback schedule off          Disable automatic backup
+  rustyback prune                 Clean up old backups
+")]
 struct Cli {
     /// Path to config file
     #[arg(short, long)]
@@ -24,9 +37,11 @@ struct Cli {
 enum Commands {
     /// Run a backup now
     Backup,
+    /// Stop a running backup
+    Stop,
     /// List all backups
     List,
-    /// Show backup status and disk usage
+    /// Show backup status, last backup, ETA if running
     Status,
     /// Prune old backups according to retention policy
     Prune {
@@ -130,6 +145,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Init => cmd_init()?,
         Commands::Backup => cmd_backup(&cli.config)?,
+        Commands::Stop => cmd_stop()?,
         Commands::List => cmd_list(&cli.config)?,
         Commands::Status => cmd_status(&cli.config)?,
         Commands::Prune { dry_run } => cmd_prune(&cli.config, dry_run)?,
@@ -557,6 +573,52 @@ daily = 30
 weekly = 52
 monthly = 0
 "#, home = home, dest = backup_dir.display())
+}
+
+fn cmd_stop() -> Result<()> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let status_path = PathBuf::from(&home).join(".local/share/rusty-mac-backup/status.json");
+
+    // Read lock file to find PID
+    let config = config::Config::load(&config::Config::default_path()).ok();
+    let lock_path = config
+        .as_ref()
+        .map(|c| c.destination.path.join(".rmb.lock"))
+        .unwrap_or_default();
+
+    if lock_path.exists() {
+        let content = std::fs::read_to_string(&lock_path).unwrap_or_default();
+        if let Some(pid_str) = content.lines()
+            .find(|l| l.starts_with("pid:"))
+            .and_then(|l| l.strip_prefix("pid:"))
+        {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                // Check if it's alive
+                if unsafe { libc::kill(pid, 0) } == 0 {
+                    println!("Stopping backup (PID {})...", pid);
+                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    // Clean up
+                    let _ = std::fs::remove_file(&lock_path);
+                    println!("{} Backup stopped.", "✅".green());
+                    return Ok(());
+                }
+            }
+        }
+        // Stale lock
+        let _ = std::fs::remove_file(&lock_path);
+        println!("{} No backup running (cleaned stale lock).", "✅".green());
+    } else if status_path.exists() {
+        let content = std::fs::read_to_string(&status_path).unwrap_or_default();
+        if content.contains("\"running\"") {
+            println!("Status says running but no lock file found. Resetting status.");
+        } else {
+            println!("No backup is currently running.");
+        }
+    } else {
+        println!("No backup is currently running.");
+    }
+    Ok(())
 }
 
 fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {

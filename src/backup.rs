@@ -223,10 +223,32 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
 
     fs::create_dir_all(&in_progress)?;
 
-    // Write lock file
+    // Write lock file (clean up stale locks from crashed backups)
     let lock_path = dest_base.join(".rmb.lock");
     if lock_path.exists() {
-        anyhow::bail!("Another backup is in progress (lock file exists: {})", lock_path.display());
+        // Check if the PID in the lock file is still alive
+        let lock_content = fs::read_to_string(&lock_path).unwrap_or_default();
+        let stale = if let Some(pid_str) = lock_content.lines()
+            .find(|l| l.starts_with("pid:"))
+            .and_then(|l| l.strip_prefix("pid:"))
+        {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                // kill(pid, 0) checks if process exists without sending a signal
+                let alive = unsafe { libc::kill(pid, 0) } == 0;
+                !alive
+            } else {
+                true // Can't parse PID — stale
+            }
+        } else {
+            true // No PID in lock — stale
+        };
+
+        if stale {
+            println!("  {} removing stale lock (process no longer running)", "🧹".to_string());
+            let _ = fs::remove_file(&lock_path);
+        } else {
+            anyhow::bail!("Another backup is in progress (lock file exists: {})", lock_path.display());
+        }
     }
     fs::write(&lock_path, format!("pid:{}\nstarted:{}\n", std::process::id(), timestamp))?;
 
@@ -620,10 +642,26 @@ mod tests {
         let dest = TempDir::new().unwrap();
 
         fs::write(source.path().join("f.txt"), "t").unwrap();
-        fs::write(dest.path().join(".rmb.lock"), "pid:99\n").unwrap();
+        // Use current PID so the lock looks active (not stale)
+        let my_pid = std::process::id();
+        fs::write(dest.path().join(".rmb.lock"), format!("pid:{}\n", my_pid)).unwrap();
 
         let config = test_config(source.path(), dest.path());
         assert!(run_backup(&config).is_err());
+    }
+
+    #[test]
+    fn test_stale_lock_gets_cleaned() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        fs::write(source.path().join("f.txt"), "data").unwrap();
+        // PID 99999999 doesn't exist — lock is stale
+        fs::write(dest.path().join(".rmb.lock"), "pid:99999999\n").unwrap();
+
+        let config = test_config(source.path(), dest.path());
+        // Should succeed because stale lock is cleaned up
+        assert!(run_backup(&config).is_ok());
     }
 
     #[test]
