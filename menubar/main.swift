@@ -763,6 +763,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pollStatus()
         schedulePollTimer(interval: 30)
         requestNotificationPermission()
+
+        // Check for updates on launch (after 5s delay to not block startup)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            AutoUpdater.shared.checkForUpdates { [weak self] hasUpdate in
+                if hasUpdate { self?.buildMenu() }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1076,6 +1083,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let logItem = NSMenuItem(title: "View Backup Log", action: #selector(viewLog), keyEquivalent: "")
         logItem.target = self
         menu.addItem(logItem)
+
+        // Update available
+        if AutoUpdater.shared.updateAvailable {
+            menu.addItem(NSMenuItem.separator())
+            let updateItem = NSMenuItem(title: "", action: #selector(installUpdate), keyEquivalent: "u")
+            updateItem.keyEquivalentModifierMask = .command
+            updateItem.target = self
+            updateItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.verde),
+                MLText.colored("Aggiornamento v\(AutoUpdater.shared.updateVersionString)", MLColor.verde)
+            )
+            menu.addItem(updateItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -1885,6 +1905,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    @objc private func installUpdate() {
+        AutoUpdater.shared.downloadUpdate()
+    }
+
     @objc private func runSetup() {
         // Open terminal and run rustyback init
         let script = "tell application \"Terminal\" to do script \"rustyback init\""
@@ -1923,6 +1947,102 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request)
         }
+    }
+}
+
+// MARK: - Auto-Updater
+
+class AutoUpdater {
+    static let shared = AutoUpdater()
+    private let repo = "Roberdan/RustyMacBackup"
+    private let currentVersion: String = {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+    }()
+    private var latestVersion: String?
+    private var downloadURL: String?
+    private var lastCheck: Date = .distantPast
+
+    func checkForUpdates(force: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        // Check at most once per hour (unless forced)
+        if !force && -lastCheck.timeIntervalSinceNow < 3600 {
+            completion?(latestVersion != nil && latestVersion != currentVersion)
+            return
+        }
+
+        let urlStr = "https://api.github.com/repos/\(repo)/releases/latest"
+        guard let url = URL(string: urlStr) else {
+            completion?(false)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+
+            self.lastCheck = Date()
+
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let tagName = json["tag_name"] as? String else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+
+            let remoteVersion = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+            self.latestVersion = remoteVersion
+
+            // Find .pkg asset
+            if let assets = json["assets"] as? [[String: Any]] {
+                for asset in assets {
+                    if let name = asset["name"] as? String, name.hasSuffix(".pkg"),
+                       let url = asset["browser_download_url"] as? String {
+                        self.downloadURL = url
+                        break
+                    }
+                }
+            }
+
+            let hasUpdate = self.isNewer(remoteVersion, than: self.currentVersion)
+            DispatchQueue.main.async { completion?(hasUpdate) }
+        }.resume()
+    }
+
+    var updateAvailable: Bool {
+        guard let latest = latestVersion else { return false }
+        return isNewer(latest, than: currentVersion)
+    }
+
+    var updateVersionString: String {
+        return latestVersion ?? currentVersion
+    }
+
+    func downloadUpdate() {
+        // If we have a .pkg URL, download and open it
+        if let urlStr = downloadURL, let url = URL(string: urlStr) {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        // Fallback: open releases page
+        if let url = URL(string: "https://github.com/\(repo)/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func isNewer(_ remote: String, than local: String) -> Bool {
+        let r = remote.split(separator: ".").compactMap { Int($0) }
+        let l = local.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(r.count, l.count) {
+            let rv = i < r.count ? r[i] : 0
+            let lv = i < l.count ? l[i] : 0
+            if rv > lv { return true }
+            if rv < lv { return false }
+        }
+        return false
     }
 }
 

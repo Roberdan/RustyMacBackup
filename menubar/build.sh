@@ -36,6 +36,11 @@ if [ -d "${SCRIPT_DIR}/icons" ]; then
         echo "⚠️  No PNG icons found in icons/"
 fi
 
+# Copy app icon
+if [ -f "${SCRIPT_DIR}/AppIcon.icns" ]; then
+    cp "${SCRIPT_DIR}/AppIcon.icns" "${BUNDLE}/Contents/Resources/AppIcon.icns"
+fi
+
 echo "📦 Bundle created: ${BUNDLE}"
 
 # Copy to /Applications

@@ -12,13 +12,21 @@ echo "  Building RustyMacBackup v${VERSION} installer package"
 echo "  ────────────────────────────────────────────────────"
 echo ""
 
-# Step 1: Build everything
-echo "1/5  Building backup engine..."
-cd "$SCRIPT_DIR"
-cargo build --release --quiet
+# Step 1: Build everything (skip if already built in CI)
+if [ ! -f "${SCRIPT_DIR}/target/release/rustyback" ]; then
+    echo "1/5  Building backup engine..."
+    cd "$SCRIPT_DIR"
+    cargo build --release --quiet
+else
+    echo "1/5  Binary already built, skipping..."
+fi
 
-echo "2/5  Building menu bar app..."
-bash menubar/build.sh 2>&1 | tail -1
+if [ ! -d "${SCRIPT_DIR}/menubar/RustyBackMenu.app" ]; then
+    echo "2/5  Building menu bar app..."
+    bash menubar/build.sh 2>&1 | tail -1
+else
+    echo "2/5  Menu bar app already built, skipping..."
+fi
 
 # Step 3: Create package staging area
 echo "3/5  Staging package contents..."
