@@ -608,7 +608,13 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     // Ensure destination is writable before starting
     ensure_writable_dir(&config.destination.path)?;
 
-    let stats = backup::run_backup(&config)?;
+    let stats = match backup::run_backup(&config) {
+        Ok(s) => s,
+        Err(e) => {
+            backup::write_error_status();
+            return Err(e);
+        }
+    };
     let elapsed = start.elapsed();
 
     println!();
@@ -658,6 +664,46 @@ fn cmd_status(config_path: &Option<PathBuf>) -> Result<()> {
 
     println!("{}", "🦀 RustyMacBackup Status".bold().cyan());
     println!();
+
+    // Show live status from status file if available
+    let status_path = backup::status_file_path();
+    if let Ok(content) = std::fs::read_to_string(&status_path) {
+        if let Ok(status) = serde_json::from_str::<backup::BackupStatusFile>(&content) {
+            match status.state.as_str() {
+                "running" => {
+                    println!("  State:    {}", "RUNNING".yellow().bold());
+                    println!("  Started:  {}", status.started_at);
+                    println!("  Progress: {}/{} files", status.files_done, status.files_total);
+                    println!("  Speed:    {}/s", format_bytes(status.bytes_per_sec));
+                    println!("  ETA:      {}s", status.eta_secs);
+                    if !status.current_file.is_empty() {
+                        println!("  Current:  {}", status.current_file.dimmed());
+                    }
+                    println!();
+                }
+                "idle" => {
+                    if !status.last_completed.is_empty() {
+                        println!("  Last backup:  {}", status.last_completed.green());
+                        println!("  Duration:     {:.1}s", status.last_duration_secs);
+                        println!("  Files:        {}", status.files_total);
+                        println!("  Copied:       {}", format_bytes(status.bytes_copied));
+                        if status.errors > 0 {
+                            println!("  Errors:       {}", status.errors.to_string().red());
+                        }
+                        println!();
+                    }
+                }
+                "error" => {
+                    println!("  State:    {}", "ERROR".red().bold());
+                    if !status.last_completed.is_empty() {
+                        println!("  Last OK:  {}", status.last_completed);
+                    }
+                    println!();
+                }
+                _ => {}
+            }
+        }
+    }
 
     let backups = backup::list_backups(dest)?;
     println!("  Backups: {}", backups.len());
