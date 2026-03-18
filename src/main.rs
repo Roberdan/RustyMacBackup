@@ -291,7 +291,10 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
     }
 
     // Need elevated permissions — use sudo
-    println!("  {} Need permissions to write to disk (sudo required)", "🔑".to_string());
+    println!();
+    println!("  {} This disk requires admin permissions for the first setup.", "🔑".to_string());
+    println!("  You'll be asked for your password once. This won't be needed again.");
+    println!();
 
     // Fix parent volume permissions
     if let Some(parent) = path.parent() {
