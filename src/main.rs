@@ -561,6 +561,37 @@ monthly = 0
 
 fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     let config = load_config(config_path)?;
+
+    // Check if running on battery — skip if scheduled (non-interactive)
+    if is_on_battery() && !atty::is(atty::Stream::Stdout) {
+        eprintln!("🔋 On battery power — skipping scheduled backup.");
+        return Ok(());
+    }
+    if is_on_battery() {
+        println!("{}", "🔋 Note: running on battery. Backup will use low priority I/O.".yellow());
+    }
+
+    // Check if destination disk is connected
+    if !config.destination.path.exists() && !config.destination.path.starts_with("/tmp") {
+        // Extract volume name for a friendly message
+        let vol_name = config.destination.path.components()
+            .nth(2)
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .unwrap_or_else(|| config.destination.path.display().to_string());
+        
+        if atty::is(atty::Stream::Stdout) {
+            anyhow::bail!(
+                "💾 Backup disk \"{}\" is not connected.\n   \
+                 Connect the disk and try again.",
+                vol_name
+            );
+        } else {
+            // Scheduled run — just exit silently
+            eprintln!("💾 Backup disk \"{}\" not connected — skipping.", vol_name);
+            return Ok(());
+        }
+    }
+
     let start = Instant::now();
 
     println!("{}", "🦀 RustyMacBackup".bold().cyan());
@@ -1015,4 +1046,22 @@ fn cmd_schedule(action: ScheduleAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// =============================================================================
+// Power management
+// =============================================================================
+
+/// Check if Mac is running on battery (not plugged in)
+fn is_on_battery() -> bool {
+    let output = std::process::Command::new("pmset")
+        .args(["-g", "batt"])
+        .output();
+    match output {
+        Ok(out) => {
+            let info = String::from_utf8_lossy(&out.stdout);
+            info.contains("'Battery Power'")
+        }
+        Err(_) => false, // Can't determine — assume plugged in
+    }
 }
