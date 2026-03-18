@@ -1347,20 +1347,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        // Try to list contents of a TCC-protected directory
-        // If FDA is not granted, this will return nil/empty
-        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-        let testPaths = ["\(home)/Library/Safari", "\(home)/Library/Mail", "\(home)/Library/Messages"]
-        for path in testPaths {
-            if FileManager.default.fileExists(atPath: path) {
-                if let contents = try? FileManager.default.contentsOfDirectory(atPath: path) {
-                    return !contents.isEmpty || true // directory exists and is listable = FDA OK
-                }
-                // Can't list = no FDA
-                return false
-            }
-        }
-        // None of the test dirs exist — assume FDA is OK (can't determine)
+        // FDA is managed by the user via System Settings
+        // We can't reliably detect it programmatically on all macOS versions
+        // If backup fails due to permissions, the error will be shown in status
         return true
     }
 
