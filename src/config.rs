@@ -14,7 +14,26 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct SourceConfig {
+    /// Primary source path (backward compatible)
+    #[serde(default)]
     pub path: PathBuf,
+    /// Additional source paths to backup
+    #[serde(default)]
+    pub extra_paths: Vec<PathBuf>,
+}
+
+impl SourceConfig {
+    /// Returns all paths to backup
+    pub fn all_paths(&self) -> Vec<&PathBuf> {
+        let mut paths = Vec::new();
+        if !self.path.as_os_str().is_empty() {
+            paths.push(&self.path);
+        }
+        for p in &self.extra_paths {
+            paths.push(p);
+        }
+        paths
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -326,6 +326,14 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
 fn generate_default_config(home: &str, backup_dir: &std::path::Path) -> String {
     format!(r#"[source]
 path = "{home}"
+# System paths to include in backup (apps, homebrew, system config)
+extra_paths = [
+    "/Applications",
+    "/opt/homebrew",
+    "/usr/local",
+    "/etc",
+    "/Library",
+]
 
 [destination]
 path = "{dest}"
@@ -347,6 +355,8 @@ patterns = [
     "Library/Application Support/Caches",
     "Library/Saved Application State",
     "Library/Containers/*/Data/Library/Caches",
+    "Library/Updates",
+    "Library/Developer",
 
     # Cloud-synced (already backed up remotely)
     "OneDrive*",
@@ -390,7 +400,13 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     let start = Instant::now();
 
     println!("{}", "🦀 RustyMacBackup".bold().cyan());
-    println!("   Source: {}", config.source.path.display());
+    for (i, src) in config.source.all_paths().iter().enumerate() {
+        if i == 0 {
+            println!("   Source: {}", src.display());
+        } else {
+            println!("          {}", src.display());
+        }
+    }
     println!("   Dest:   {}", config.destination.path.display());
     println!();
 
@@ -608,7 +624,16 @@ fn config_path_for(cli_config: &Option<PathBuf>) -> PathBuf {
 fn save_config(path: &std::path::Path, config: &config::Config) -> Result<()> {
     let mut out = String::new();
 
-    out.push_str(&format!("[source]\npath = {:?}\n\n", config.source.path.to_string_lossy()));
+    out.push_str(&format!("[source]\npath = {:?}\n", config.source.path.to_string_lossy()));
+    if !config.source.extra_paths.is_empty() {
+        out.push_str("extra_paths = [\n");
+        for p in &config.source.extra_paths {
+            out.push_str(&format!("    {:?},\n", p.to_string_lossy()));
+        }
+        out.push_str("]\n");
+    }
+    out.push('\n');
+
     out.push_str(&format!("[destination]\npath = {:?}\n\n", config.destination.path.to_string_lossy()));
 
     out.push_str("[exclude]\npatterns = [\n");

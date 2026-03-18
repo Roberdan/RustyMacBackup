@@ -66,9 +66,13 @@ fn cleanup_stale_in_progress(dest_base: &Path) -> Result<()> {
 }
 
 pub fn run_backup(config: &Config) -> Result<BackupStats> {
-    let source = &config.source.path;
+    let sources = config.source.all_paths();
     let dest_base = &config.destination.path;
     let filter = ExcludeFilter::new(&config.exclude.patterns);
+
+    if sources.is_empty() {
+        anyhow::bail!("No source paths configured");
+    }
 
     // Ensure destination exists
     fs::create_dir_all(dest_base)?;
@@ -80,7 +84,6 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     let free_space = check_disk_space(dest_base)?;
     if free_space < MIN_FREE_SPACE {
         println!("{}", "⚠ Low disk space! Running auto-prune...".yellow().bold());
-        // Auto-prune with aggressive policy
         let policy = crate::retention::RetentionPolicy {
             hourly: config.retention.hourly,
             daily: config.retention.daily,
@@ -92,7 +95,6 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
             println!("  Pruned {} old backups to free space", pruned.len());
         }
 
-        // Re-check after prune
         let free_after = check_disk_space(dest_base)?;
         if free_after < MIN_FREE_SPACE {
             anyhow::bail!(
@@ -120,19 +122,25 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     }
     fs::write(&lock_path, format!("pid:{}\nstarted:{}\n", std::process::id(), timestamp))?;
 
-    // Count files first for progress bar
+    // Count files across all sources
     println!("{}", "Scanning files...".dimmed());
-    let file_count = WalkDir::new(source)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            if let Ok(rel) = e.path().strip_prefix(source) {
-                !filter.is_excluded(rel)
-            } else {
-                true
-            }
-        })
-        .count() as u64;
+    let mut file_count: u64 = 0;
+    for source in &sources {
+        if !source.exists() {
+            continue;
+        }
+        file_count += WalkDir::new(source)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                if let Ok(rel) = e.path().strip_prefix(source) {
+                    !filter.is_excluded(rel)
+                } else {
+                    true
+                }
+            })
+            .count() as u64;
+    }
 
     let pb = ProgressBar::new(file_count);
     pb.set_style(
@@ -144,47 +152,62 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
 
     let mut stats = BackupStats::new();
 
-    for entry in WalkDir::new(source)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        let relative = match path.strip_prefix(source) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-
-        // Skip excluded
-        if filter.is_excluded(relative) {
-            pb.inc(1);
+    // Backup each source into a subfolder named after its path
+    for source in &sources {
+        if !source.exists() {
+            stats.errors.push(format!("Source not found: {}", source.display()));
             continue;
         }
 
-        let dest_path = in_progress.join(relative);
+        // Map source path to backup subfolder:
+        //   /Users/roberdan → Users/roberdan/
+        //   /Applications   → Applications/
+        //   /opt/homebrew   → opt/homebrew/
+        let prefix = source.strip_prefix("/").unwrap_or(source);
 
-        if entry.file_type().is_dir() {
-            if let Err(e) = fs_create_dir(&dest_path) {
-                stats.errors.push(format!("mkdir {}: {}", dest_path.display(), e));
-            } else {
-                stats.dirs_created += 1;
-            }
-        } else if entry.file_type().is_file() {
-            match process_file(path, &dest_path, relative, &latest) {
-                Ok(FileAction::HardLinked) => stats.files_hardlinked += 1,
-                Ok(FileAction::Copied(size)) => {
-                    stats.files_copied += 1;
-                    stats.bytes_copied += size;
-                }
-                Err(e) => {
-                    stats.errors.push(format!("{}: {}", relative.display(), e));
-                }
-            }
-        }
-        // Skip symlinks
+        for entry in WalkDir::new(source)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            let relative = match path.strip_prefix(source) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
 
-        pb.inc(1);
-        if stats.total_files() % 500 == 0 {
-            pb.set_message(format!("{} linked, {} copied", stats.files_hardlinked, stats.files_copied));
+            // Skip excluded
+            if filter.is_excluded(relative) {
+                pb.inc(1);
+                continue;
+            }
+
+            // Destination: in_progress/prefix/relative
+            let dest_path = in_progress.join(prefix).join(relative);
+
+            if entry.file_type().is_dir() {
+                if let Err(e) = fs_create_dir(&dest_path) {
+                    stats.errors.push(format!("mkdir {}: {}", dest_path.display(), e));
+                } else {
+                    stats.dirs_created += 1;
+                }
+            } else if entry.file_type().is_file() {
+                let link_relative = prefix.join(relative);
+                match process_file(path, &dest_path, &link_relative, &latest) {
+                    Ok(FileAction::HardLinked) => stats.files_hardlinked += 1,
+                    Ok(FileAction::Copied(size)) => {
+                        stats.files_copied += 1;
+                        stats.bytes_copied += size;
+                    }
+                    Err(e) => {
+                        stats.errors.push(format!("{}: {}", relative.display(), e));
+                    }
+                }
+            }
+
+            pb.inc(1);
+            if stats.total_files() % 500 == 0 {
+                pb.set_message(format!("{} linked, {} copied", stats.files_hardlinked, stats.files_copied));
+            }
         }
     }
 
@@ -309,7 +332,10 @@ mod tests {
 
     fn test_config(source: &Path, dest: &Path) -> Config {
         Config {
-            source: crate::config::SourceConfig { path: source.to_path_buf() },
+            source: crate::config::SourceConfig { 
+                path: source.to_path_buf(),
+                extra_paths: vec![],
+            },
             destination: crate::config::DestinationConfig { path: dest.to_path_buf() },
             exclude: crate::config::ExcludeConfig { patterns: vec!["*.tmp".to_string(), "node_modules".to_string()] },
             retention: crate::config::RetentionConfig { hourly: 24, daily: 30, weekly: 52, monthly: 0 },
