@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use walkdir::WalkDir;
@@ -346,9 +346,22 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     let a_copied = AtomicU64::new(0);
     let a_bytes = AtomicU64::new(0);
     let a_done = AtomicU64::new(0);
+    let disk_disconnected = AtomicBool::new(false);
     let file_errs: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     file_entries.par_iter().for_each(|entry| {
+        // If another thread detected disk disconnect, skip immediately
+        if disk_disconnected.load(Ordering::Relaxed) {
+            return;
+        }
+
+        // Periodically check if the destination disk is still connected
+        let done_so_far = a_done.load(Ordering::Relaxed);
+        if done_so_far % 100 == 0 && !in_progress.exists() {
+            disk_disconnected.store(true, Ordering::Relaxed);
+            return;
+        }
+
         match process_file(&entry.source_path, &entry.dest_path, &entry.link_relative, &latest) {
             Ok(FileAction::HardLinked) => {
                 a_hardlinked.fetch_add(1, Ordering::Relaxed);
@@ -358,6 +371,14 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
                 a_bytes.fetch_add(size, Ordering::Relaxed);
             }
             Err(e) => {
+                // An I/O error may indicate disk disconnect
+                let msg = e.to_string();
+                if msg.contains("No such file or directory") || msg.contains("Input/output error") {
+                    if !in_progress.exists() {
+                        disk_disconnected.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
                 if let Ok(mut errs) = file_errs.lock() {
                     errs.push(format!("{}: {}", entry.link_relative.display(), e));
                 }
@@ -402,6 +423,13 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
             });
         }
     });
+
+    // Handle disk disconnection detected during backup
+    if disk_disconnected.load(Ordering::Relaxed) {
+        let _ = fs::remove_file(&lock_path);
+        write_error_status();
+        anyhow::bail!("💾 Backup disk was disconnected during backup!");
+    }
 
     let files_hardlinked = a_hardlinked.load(Ordering::Relaxed);
     let files_copied = a_copied.load(Ordering::Relaxed);

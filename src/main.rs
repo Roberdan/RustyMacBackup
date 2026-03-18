@@ -673,6 +673,13 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     let stats = match backup::run_backup(&config) {
         Ok(s) => s,
         Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("disconnected during backup") {
+                eprintln!("{}", "💾 Backup disk was disconnected during backup!".red().bold());
+                eprintln!("   The in-progress backup has been abandoned.");
+                eprintln!("   Reconnect the disk and run the backup again.");
+                return Ok(());
+            }
             backup::write_error_status();
             return Err(e);
         }
@@ -767,27 +774,41 @@ fn cmd_status(config_path: &Option<PathBuf>) -> Result<()> {
         }
     }
 
-    let backups = backup::list_backups(dest)?;
+    // Check if destination disk is connected
+    let disk_connected = dest.exists();
+    if !disk_connected {
+        let vol_name = dest.components()
+            .nth(2)
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .unwrap_or_else(|| dest.display().to_string());
+        println!("  Disk:     {} {}", "💾".to_string(), format!("\"{}\" not connected", vol_name).yellow());
+        println!();
+    }
+
+    let backups = if disk_connected { backup::list_backups(dest)? } else { vec![] };
     println!("  Backups: {}", backups.len());
 
     if let Some((latest, _)) = backups.last() {
         println!("  Latest:  {}", latest.green());
     }
 
-    // Disk usage
-    let disk_usage = dir_size(dest)?;
-    println!("  Disk:    {}", format_bytes(disk_usage));
+    if disk_connected {
+        let disk_usage = dir_size(dest)?;
+        println!("  Disk:    {}", format_bytes(disk_usage));
+    }
 
-    println!();
-    retention::print_retention_summary(
-        dest,
-        &retention::RetentionPolicy {
-            hourly: config.retention.hourly,
-            daily: config.retention.daily,
-            weekly: config.retention.weekly,
-            monthly: config.retention.monthly,
-        },
-    )?;
+    if disk_connected {
+        println!();
+        retention::print_retention_summary(
+            dest,
+            &retention::RetentionPolicy {
+                hourly: config.retention.hourly,
+                daily: config.retention.daily,
+                weekly: config.retention.weekly,
+                monthly: config.retention.monthly,
+            },
+        )?;
+    }
 
     Ok(())
 }

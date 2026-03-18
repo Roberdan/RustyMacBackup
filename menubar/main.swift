@@ -190,65 +190,88 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Icon Management
 
-    private let spinFrames = [
-        "arrow.triangle.2.circlepath",
-        "arrow.triangle.2.circlepath",
-        "arrow.triangle.2.circlepath",
-        "arrow.triangle.2.circlepath"
-    ]
+    private func loadBundleIcon(_ name: String) -> NSImage? {
+        // Try loading PNG from app bundle Resources
+        if let path = Bundle.main.path(forResource: name, ofType: "png") {
+            if let img = NSImage(contentsOfFile: path) {
+                img.isTemplate = true
+                img.size = NSSize(width: 18, height: 18)
+                return img
+            }
+        }
+        return nil
+    }
 
     private func setIdleIcon(stale: Bool, hasError: Bool) {
         stopAnimation()
         guard let button = statusItem.button else { return }
 
-        let config: NSImage.SymbolConfiguration
         if hasError {
-            let img = NSImage(systemSymbolName: "externaldrive.badge.exclamationmark",
-                              accessibilityDescription: "Backup Error")
-            config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
-            button.image = img?.withSymbolConfiguration(config)
+            if let img = loadBundleIcon("icon-warning") {
+                button.image = img
+                button.title = ""
+            } else {
+                button.image = nil
+                button.title = "✕"
+            }
         } else if stale {
-            let img = NSImage(systemSymbolName: "externaldrive.badge.timemachine",
-                              accessibilityDescription: "Backup Stale")
-            config = NSImage.SymbolConfiguration(paletteColors: [.systemOrange])
-            button.image = img?.withSymbolConfiguration(config)
+            if let img = loadBundleIcon("icon-warning") {
+                button.image = img
+                button.title = ""
+            } else {
+                button.image = nil
+                button.title = "◐"
+            }
         } else {
-            let img = NSImage(systemSymbolName: "externaldrive.badge.timemachine",
-                              accessibilityDescription: "RustyMacBackup")
-            config = NSImage.SymbolConfiguration(paletteColors: [.systemGreen])
-            button.image = img?.withSymbolConfiguration(config)
+            if let img = loadBundleIcon("icon-idle") {
+                button.image = img
+                button.title = ""
+            } else if let img = NSImage(systemSymbolName: "externaldrive.badge.checkmark",
+                                        accessibilityDescription: "RustyMacBackup") {
+                img.isTemplate = true
+                button.image = img
+                button.title = ""
+            } else {
+                button.image = nil
+                button.title = "●"
+            }
         }
     }
 
     private func startAnimation() {
         guard animationTimer == nil else { return }
         animationFrame = 0
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            guard let self = self, let button = self.statusItem.button else { return }
-            self.animationFrame = (self.animationFrame + 1) % 4
-            let rotations: [CGFloat] = [0, 90, 180, 270]
-            let img = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
-                              accessibilityDescription: "Backup Running")
-            let config = NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor])
-            if let configured = img?.withSymbolConfiguration(config) {
-                let rotated = Self.rotateImage(configured, degrees: rotations[self.animationFrame])
-                button.image = rotated
+
+        let iconRunning = loadBundleIcon("icon-running")
+        let iconIdle = loadBundleIcon("icon-idle")
+
+        if iconRunning != nil {
+            // Alternate between running and idle icons
+            animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                guard let self = self, let button = self.statusItem.button else { return }
+                self.animationFrame = (self.animationFrame + 1) % 2
+                button.image = self.animationFrame == 0 ? iconRunning : iconIdle
+                button.title = ""
+            }
+            // Set initial frame
+            if let button = statusItem.button {
+                button.image = iconRunning
+                button.title = ""
+            }
+        } else {
+            // Fallback: rotating quarter-circle emoji
+            let frames = ["◐", "◓", "◑", "◒"]
+            animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                guard let self = self, let button = self.statusItem.button else { return }
+                self.animationFrame = (self.animationFrame + 1) % frames.count
+                button.image = nil
+                button.title = frames[self.animationFrame]
             }
         }
     }
 
     private static func rotateImage(_ image: NSImage, degrees: CGFloat) -> NSImage {
-        let size = image.size
-        let newImage = NSImage(size: size)
-        newImage.lockFocus()
-        let transform = NSAffineTransform()
-        transform.translateX(by: size.width / 2, yBy: size.height / 2)
-        transform.rotate(byDegrees: degrees)
-        transform.translateX(by: -size.width / 2, yBy: -size.height / 2)
-        transform.concat()
-        image.draw(in: NSRect(origin: .zero, size: size))
-        newImage.unlockFocus()
-        return newImage
+        return image
     }
 
     private func stopAnimation() {

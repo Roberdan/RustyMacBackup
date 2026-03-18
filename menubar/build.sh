@@ -29,6 +29,13 @@ mkdir -p "${BUNDLE}/Contents/Resources"
 mv "${SCRIPT_DIR}/${APP_NAME}" "${BUNDLE}/Contents/MacOS/${APP_NAME}"
 cp "${SCRIPT_DIR}/Info.plist" "${BUNDLE}/Contents/Info.plist"
 
+# Copy PNG icons to Resources
+if [ -d "${SCRIPT_DIR}/icons" ]; then
+    cp "${SCRIPT_DIR}"/icons/*.png "${BUNDLE}/Contents/Resources/" 2>/dev/null && \
+        echo "🎨 Icons copied to Resources" || \
+        echo "⚠️  No PNG icons found in icons/"
+fi
+
 echo "📦 Bundle created: ${BUNDLE}"
 
 # Copy to /Applications
