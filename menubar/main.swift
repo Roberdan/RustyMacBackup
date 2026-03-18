@@ -583,6 +583,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
+        // Check if setup is needed
+        let configExists = FileManager.default.fileExists(atPath: ConfigManager.configPath)
+        let hasFullDiskAccess = checkFullDiskAccess()
+
+        if !configExists {
+            // No config — show setup required
+            let header = NSMenuItem(title: "⚠️ Setup Required", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            menu.addItem(NSMenuItem.separator())
+
+            let setupItem = NSMenuItem(title: "Run First-Time Setup...", action: #selector(runSetup), keyEquivalent: "")
+            setupItem.target = self
+            menu.addItem(setupItem)
+
+            let helpItem = NSMenuItem(title: "Open in terminal: rustyback init", action: nil, keyEquivalent: "")
+            helpItem.isEnabled = false
+            menu.addItem(helpItem)
+
+            menu.addItem(NSMenuItem.separator())
+            let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+            quitItem.target = self
+            menu.addItem(quitItem)
+            statusItem.menu = menu
+            return
+        }
+
+        if !hasFullDiskAccess {
+            // Config exists but no FDA
+            let header = NSMenuItem(title: "RustyMacBackup", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            menu.addItem(NSMenuItem.separator())
+
+            let fdaItem = NSMenuItem(title: "⚠️ Full Disk Access Required", action: nil, keyEquivalent: "")
+            fdaItem.isEnabled = false
+            menu.addItem(fdaItem)
+
+            let fixItem = NSMenuItem(title: "Open Privacy Settings...", action: #selector(openFDASettings), keyEquivalent: "")
+            fixItem.target = self
+            menu.addItem(fixItem)
+
+            let helpItem = NSMenuItem(title: "Add RustyBackMenu.app to Full Disk Access", action: nil, keyEquivalent: "")
+            helpItem.isEnabled = false
+            menu.addItem(helpItem)
+
+            menu.addItem(NSMenuItem.separator())
+            let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+            quitItem.target = self
+            menu.addItem(quitItem)
+            statusItem.menu = menu
+            return
+        }
+
+        // Normal menu — config exists and FDA granted
         // Header
         let header = NSMenuItem(title: "RustyMacBackup", action: nil, keyEquivalent: "")
         header.isEnabled = false
@@ -1275,6 +1330,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+
+    @objc private func runSetup() {
+        // Open terminal and run rustyback init
+        let script = "tell application \"Terminal\" to do script \"rustyback init\""
+        NSAppleScript(source: script)?.executeAndReturnError(nil)
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+    }
+
+    @objc private func openFDASettings() {
+        // Open System Settings > Privacy > Full Disk Access
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func checkFullDiskAccess() -> Bool {
+        // Try reading a TCC-protected directory
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+        return FileManager.default.isReadableFile(atPath: "\(home)/Library/Mail")
+            || FileManager.default.isReadableFile(atPath: "\(home)/Library/Safari")
     }
 
     // MARK: Notifications

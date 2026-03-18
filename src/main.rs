@@ -469,34 +469,48 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
                     let _ = std::fs::remove_file(&test_file);
                     return Ok(());
                 }
-                Err(_) => {} // Fall through to sudo
+                Err(e) => {
+                    // If directory exists but we can't write, it's likely FDA missing
+                    if path.exists() && !atty::is(atty::Stream::Stdout) {
+                        // Non-interactive (menu bar app): clear error about FDA
+                        anyhow::bail!(
+                            "Permission denied writing to {}.\n\
+                             Add RustyBackMenu.app to Full Disk Access in System Settings.",
+                            path.display()
+                        );
+                    }
+                    // Interactive terminal: fall through to sudo
+                    if !atty::is(atty::Stream::Stdout) {
+                        anyhow::bail!("Permission denied: {}", e);
+                    }
+                }
             }
         }
-        Err(_) => {} // Fall through to sudo
+        Err(e) => {
+            if !atty::is(atty::Stream::Stdout) {
+                anyhow::bail!("Cannot create {}: {}", path.display(), e);
+            }
+        }
     }
 
-    // Need elevated permissions
+    // Need elevated permissions (interactive terminal only)
     println!();
     println!("  {} This disk requires admin permissions for the first setup.", "🔑".to_string());
     println!("  You'll be asked for your password once. This won't be needed again.");
     println!();
 
-    // Create dir with sudo (works on APFS regardless of Owners setting)
     std::process::Command::new("sudo")
         .args(["mkdir", "-p", &path.to_string_lossy()])
         .status()?;
 
-    // Set permissions so our user can write without sudo from now on
-    // Use chmod instead of chown — works even when Owners is disabled on APFS
     std::process::Command::new("sudo")
         .args(["chmod", "777", &path.to_string_lossy()])
         .status()?;
 
-    // Also try to enable ownership on the volume (may fail silently, that's OK)
     if let Some(parent) = path.parent() {
         let _ = std::process::Command::new("sudo")
             .args(["diskutil", "enableOwnership", &parent.to_string_lossy()])
-            .output(); // ignore errors — not all volumes support this
+            .output();
     }
 
     // Verify
