@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(name = "rustyback", version, about = "🦀 RustyMacBackup — Fast incremental backups with hard links",
+#[command(name = "rustyback", version, about = "RustyMacBackup — Fast incremental backups with hard links",
     after_help = "\x1b[1mQuick Reference:\x1b[0m
   rustyback init                  First-time setup wizard
   rustyback backup                Run backup now
@@ -176,7 +176,7 @@ fn cmd_init() -> Result<()> {
     let terminal_name = std::env::var("TERM_PROGRAM").unwrap_or_else(|_| "Terminal".to_string());
 
     println!();
-    println!("{}", "🦀 RustyMacBackup — First Time Setup".bold().cyan());
+    println!("{}", "RustyMacBackup — First Time Setup".bold().cyan());
     println!("{}", "━".repeat(50).dimmed());
     println!();
 
@@ -307,7 +307,7 @@ fn cmd_init() -> Result<()> {
 
     println!();
     println!("{}", "━".repeat(50).dimmed());
-    println!("{}", "🦀 RustyMacBackup is ready!".bold().green());
+    println!("{}", "RustyMacBackup is ready!".bold().green());
     println!("{}", "━".repeat(50).dimmed());
     println!();
     println!("  {} {}", "Source:".bold(), home);
@@ -675,7 +675,7 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
 
     let start = Instant::now();
 
-    println!("{}", "🦀 RustyMacBackup".bold().cyan());
+    println!("{}", "RustyMacBackup".bold().cyan());
     for (i, src) in config.source.all_paths().iter().enumerate() {
         if i == 0 {
             println!("   Source: {}", src.display());
@@ -750,7 +750,7 @@ fn cmd_status(config_path: &Option<PathBuf>) -> Result<()> {
     let config = load_config(config_path)?;
     let dest = &config.destination.path;
 
-    println!("{}", "🦀 RustyMacBackup Status".bold().cyan());
+    println!("{}", "RustyMacBackup Status".bold().cyan());
     println!();
 
     // Show live status from status file if available
