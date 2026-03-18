@@ -105,21 +105,36 @@ enum Fmt {
 
     static func relativeTime(from date: Date) -> String {
         let secs = Int(-date.timeIntervalSinceNow)
-        if secs < 60 { return "just now" }
-        if secs < 3600 { return "\(secs / 60) min ago" }
+        if secs < 60 { return "adesso" }
+        if secs < 3600 {
+            let m = secs / 60
+            return "\(m) minut\(m == 1 ? "o" : "i") fa"
+        }
         if secs < 86400 {
             let h = secs / 3600
-            return "\(h) hour\(h == 1 ? "" : "s") ago"
+            let m = (secs % 3600) / 60
+            if m > 0 {
+                return "\(h) or\(h == 1 ? "a" : "e") e \(m) min fa"
+            }
+            return "\(h) or\(h == 1 ? "a" : "e") fa"
         }
         let d = secs / 86400
-        return "\(d) day\(d == 1 ? "" : "s") ago"
+        if d == 1 { return "ieri" }
+        return "\(d) giorni fa"
     }
 
     static func duration(_ secs: Double) -> String {
-        if secs < 60 { return "\(Int(secs))s" }
-        let m = Int(secs) / 60
-        let s = Int(secs) % 60
-        return s > 0 ? "\(m)m \(s)s" : "\(m)m"
+        let total = Int(secs)
+        if total < 60 { return "\(total) secondi" }
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 {
+            if m > 0 { return "circa \(h) or\(h == 1 ? "a" : "e") e \(m) min" }
+            return "circa \(h) or\(h == 1 ? "a" : "e")"
+        }
+        if s > 0 && m < 10 { return "\(m) min \(s) sec" }
+        return "\(m) minuti"
     }
 
     static func number(_ n: Int) -> String {
@@ -873,27 +888,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let total = status.files_total ?? 1
         let pct = total > 0 ? Int(Double(done) / Double(total) * 100) : 0
 
+        // Progress bar style: ████░░░░ 24%
+        let barLen = 20
+        let filled = pct * barLen / 100
+        let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: barLen - filled)
+
         let progressItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         progressItem.attributedTitle = MLText.build(
-            MLText.dot(MLColor.gold),
-            MLText.plain("Backing up... "),
-            MLText.colored("\(pct)%", MLColor.gold),
-            MLText.plain(" (\(Fmt.number(done))/\(Fmt.number(total)))")
+            MLText.colored("  \(bar) ", MLColor.gold),
+            MLText.colored("\(pct)%", MLColor.gold)
         )
         progressItem.isEnabled = false
         menu.addItem(progressItem)
 
-        var detailParts: [NSAttributedString] = []
-        if let eta = status.eta_secs {
-            detailParts.append(MLText.plain("ETA: "))
+        // Files count
+        let filesItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        filesItem.attributedTitle = MLText.build(
+            MLText.plain("  "),
+            MLText.colored(Fmt.number(done), MLColor.verde),
+            MLText.plain(" di "),
+            MLText.plain(Fmt.number(total)),
+            MLText.plain(" file")
+        )
+        filesItem.isEnabled = false
+        menu.addItem(filesItem)
+
+        // ETA + speed on same line
+        var detailParts: [NSAttributedString] = [MLText.plain("  ")]
+        if let eta = status.eta_secs, eta > 0 {
+            detailParts.append(MLText.plain("Finisce tra "))
             detailParts.append(MLText.colored(Fmt.duration(Double(eta)), MLColor.gold))
         }
         if let bps = status.bytes_per_sec, bps > 0 {
-            if !detailParts.isEmpty { detailParts.append(MLText.plain(" | ")) }
-            detailParts.append(MLText.colored(Fmt.speed(bps), MLColor.gold))
+            if detailParts.count > 1 { detailParts.append(MLText.plain("  ·  ")) }
+            detailParts.append(MLText.colored(Fmt.speed(bps), MLColor.verde))
         }
-        if !detailParts.isEmpty {
-            let combined = NSMutableAttributedString(string: "   ")
+        if detailParts.count > 1 {
+            let combined = NSMutableAttributedString()
             for part in detailParts { combined.append(part) }
             let detailItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             detailItem.attributedTitle = combined
@@ -902,11 +933,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let file = status.current_file, !file.isEmpty {
-            let truncated = file.count > 40
-                ? "..." + String(file.suffix(39))
+            // Show just the last 2 path components (folder/file)
+            let components = file.split(separator: "/")
+            let short = components.count > 2
+                ? String(components.suffix(2).joined(separator: "/"))
                 : file
             let fileItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            fileItem.attributedTitle = MLText.small("   \(truncated)")
+            fileItem.attributedTitle = MLText.small("  \(short)")
             fileItem.isEnabled = false
             menu.addItem(fileItem)
         }
@@ -914,9 +947,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let errs = status.errors, errs > 0 {
             let errItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             errItem.attributedTitle = MLText.build(
-                MLText.plain("   "),
+                MLText.plain("  "),
                 MLText.dot(MLColor.rosso),
-                MLText.colored("\(errs) error\(errs == 1 ? "" : "s")", MLColor.rosso)
+                MLText.colored("\(errs) errori", MLColor.rosso)
             )
             errItem.isEnabled = false
             menu.addItem(errItem)
