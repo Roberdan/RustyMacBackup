@@ -722,7 +722,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func addScheduleSubmenu(to menu: NSMenu) {
         let schedLabel = scheduleEnabled
-            ? "Schedule: Every \(scheduleIntervalMinutes) min"
+            ? (scheduleIntervalMinutes >= 1440
+                ? "Schedule: Daily at \(scheduleIntervalMinutes / 60 - 24 + (scheduleIntervalMinutes % 60 == 0 ? 0 : 1)):00"
+                : "Schedule: Every \(scheduleIntervalMinutes) min")
             : "Schedule: Disabled"
         let schedItem = NSMenuItem(title: "  \(schedLabel)", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -735,6 +737,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if mins == scheduleIntervalMinutes && scheduleEnabled {
                 item.state = .on
             }
+            submenu.addItem(item)
+        }
+
+        submenu.addItem(NSMenuItem.separator())
+
+        // Daily schedule options
+        let dailyHeader = NSMenuItem(title: "Daily at:", action: nil, keyEquivalent: "")
+        dailyHeader.isEnabled = false
+        submenu.addItem(dailyHeader)
+        for hour in [2, 3, 4, 6] {
+            let label = String(format: "%02d:00 AM", hour)
+            let item = NSMenuItem(title: label, action: #selector(changeDailySchedule(_:)), keyEquivalent: "")
+            item.tag = hour
+            item.target = self
             submenu.addItem(item)
         }
 
@@ -1051,6 +1067,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleIntervalMinutes = mins
         scheduleEnabled = true
         Shell.runAsync("rustyback schedule interval \(mins) 2>&1") { [weak self] _ in
+            self?.readScheduleState()
+        }
+        buildMenu()
+    }
+
+    @objc private func changeDailySchedule(_ sender: NSMenuItem) {
+        let hour = sender.tag
+        scheduleEnabled = true
+        scheduleIntervalMinutes = 1440 // mark as daily
+        Shell.runAsync("rustyback schedule daily \(hour) 2>&1") { [weak self] _ in
             self?.readScheduleState()
         }
         buildMenu()

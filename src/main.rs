@@ -126,6 +126,11 @@ enum ScheduleAction {
     Interval {
         minutes: u32,
     },
+    /// Schedule daily backup at a specific hour (e.g. 2 for 2:00 AM)
+    Daily {
+        /// Hour of day (0-23)
+        hour: u32,
+    },
 }
 
 fn load_config(path: &Option<PathBuf>) -> Result<config::Config> {
@@ -1101,6 +1106,39 @@ fn generate_plist(interval_secs: u32) -> String {
 "#, label = PLIST_LABEL, home = home, interval = interval_secs)
 }
 
+fn generate_plist_daily(hour: u32) -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{home}/.local/bin/rustyback</string>
+        <string>backup</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>{hour}</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{home}/.local/share/rusty-mac-backup/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>{home}/.local/share/rusty-mac-backup/backup-error.log</string>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
+"#, label = PLIST_LABEL, home = home, hour = hour)
+}
+
 fn cmd_schedule(action: ScheduleAction) -> Result<()> {
     let plist = plist_path();
 
@@ -1130,15 +1168,24 @@ fn cmd_schedule(action: ScheduleAction) -> Result<()> {
                     .args(["list", PLIST_LABEL])
                     .output()?;
                 if output.status.success() {
-                    // Read interval from plist
                     let content = std::fs::read_to_string(&plist)?;
-                    let interval = content
-                        .lines()
-                        .skip_while(|l| !l.contains("StartInterval"))
-                        .nth(1)
-                        .and_then(|l| l.trim().trim_start_matches("<integer>").trim_end_matches("</integer>").parse::<u32>().ok())
-                        .unwrap_or(0);
-                    println!("{} Schedule active — every {} min", "🟢".to_string(), interval / 60);
+                    if content.contains("StartCalendarInterval") {
+                        // Daily schedule
+                        let hour = content.lines()
+                            .skip_while(|l| !l.contains("<key>Hour</key>"))
+                            .nth(1)
+                            .and_then(|l| l.trim().trim_start_matches("<integer>").trim_end_matches("</integer>").parse::<u32>().ok())
+                            .unwrap_or(0);
+                        println!("{} Schedule active — daily at {:02}:00", "🟢".to_string(), hour);
+                    } else {
+                        // Interval schedule
+                        let interval = content.lines()
+                            .skip_while(|l| !l.contains("StartInterval"))
+                            .nth(1)
+                            .and_then(|l| l.trim().trim_start_matches("<integer>").trim_end_matches("</integer>").parse::<u32>().ok())
+                            .unwrap_or(0);
+                        println!("{} Schedule active — every {} min", "🟢".to_string(), interval / 60);
+                    }
                     // Show last log
                     let home = std::env::var("HOME").unwrap_or_default();
                     let log = PathBuf::from(&home).join(".local/share/rusty-mac-backup/backup.log");
@@ -1172,6 +1219,23 @@ fn cmd_schedule(action: ScheduleAction) -> Result<()> {
                 .args(["load", &plist.to_string_lossy()])
                 .status()?;
             println!("{} Schedule set to every {} min", "✅".green(), minutes);
+        }
+        ScheduleAction::Daily { hour } => {
+            if hour > 23 {
+                anyhow::bail!("Hour must be 0-23");
+            }
+            let was_active = plist.exists();
+            if was_active {
+                let _ = std::process::Command::new("launchctl")
+                    .args(["unload", &plist.to_string_lossy()])
+                    .status();
+            }
+            let content = generate_plist_daily(hour);
+            std::fs::write(&plist, &content)?;
+            std::process::Command::new("launchctl")
+                .args(["load", &plist.to_string_lossy()])
+                .status()?;
+            println!("{} Schedule set to daily at {:02}:00", "✅".green(), hour);
         }
     }
     Ok(())
