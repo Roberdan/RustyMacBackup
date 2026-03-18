@@ -1,14 +1,22 @@
 import Cocoa
 import UserNotifications
 
-// MARK: - Maranello Luce Design Colors
+// MARK: - Maranello Luce Design Colors (from tokens-color.css)
 
 enum MLColor {
-    static let gold    = NSColor(red: 0xFF/255, green: 0xC7/255, blue: 0x2C/255, alpha: 1) // #FFC72C
-    static let rosso   = NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1) // #DC0000
-    static let verde   = NSColor(red: 0x00/255, green: 0xA6/255, blue: 0x51/255, alpha: 1) // #00A651
-    static let nero    = NSColor(red: 0x11/255, green: 0x11/255, blue: 0x11/255, alpha: 1) // #111111
-    static let avorio  = NSColor(red: 0xFA/255, green: 0xF3/255, blue: 0xE6/255, alpha: 1) // #FAF3E6
+    // Primary Ferrari palette
+    static let gold    = NSColor(red: 0xFF/255, green: 0xC7/255, blue: 0x2C/255, alpha: 1) // --giallo-ferrari
+    static let rosso   = NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1) // --rosso-corsa
+    static let verde   = NSColor(red: 0x00/255, green: 0xA6/255, blue: 0x51/255, alpha: 1) // --verde-racing
+    static let nero    = NSColor(red: 0x11/255, green: 0x11/255, blue: 0x11/255, alpha: 1) // --nero-carbon
+    static let avorio  = NSColor(red: 0xFA/255, green: 0xF3/255, blue: 0xE6/255, alpha: 1) // --avorio-chiaro
+    // Extended palette
+    static let goldLight  = NSColor(red: 0xFF/255, green: 0xD8/255, blue: 0x5C/255, alpha: 1) // --giallo-ferrari-light
+    static let verdeLt    = NSColor(red: 0x00/255, green: 0xC9/255, blue: 0x66/255, alpha: 1) // --verde-racing-light
+    static let arancio    = NSColor(red: 0xD4/255, green: 0x62/255, blue: 0x2B/255, alpha: 1) // --arancio-warm
+    static let info       = NSColor(red: 0x44/255, green: 0x8A/255, blue: 0xFF/255, alpha: 1) // --status-info
+    static let warning    = NSColor(red: 0xFF/255, green: 0xB3/255, blue: 0x00/255, alpha: 1) // --status-warning
+    static let grigio     = NSColor(red: 0x9E/255, green: 0x9E/255, blue: 0x9E/255, alpha: 1) // --grigio-chiaro / --mn-text-muted
     static let dimmed  = NSColor.secondaryLabelColor
 }
 
@@ -44,10 +52,60 @@ enum MLText {
         colored("\u{25CF} ", color)
     }
 
+    static func smallDot(_ color: NSColor) -> NSAttributedString {
+        NSAttributedString(string: "\u{25CF} ", attributes: [.font: smallFont, .foregroundColor: color])
+    }
+
     static func build(_ parts: NSAttributedString...) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for part in parts { result.append(part) }
         return result
+    }
+
+    // Maranello-correct progress bar: monochrome accent gold
+    static func tachometer(pct: Int, width: Int = 25) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let filled = pct * width / 100
+        let monoFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+
+        // Solid gold fill + muted empty — clean Ferrari Luce style
+        if filled > 0 {
+            result.append(NSAttributedString(string: String(repeating: "\u{2589}", count: filled),
+                attributes: [.font: monoFont, .foregroundColor: MLColor.gold]))
+        }
+        let remain = width - filled
+        if remain > 0 {
+            result.append(NSAttributedString(string: String(repeating: "\u{2581}", count: remain),
+                attributes: [.font: monoFont, .foregroundColor: MLColor.grigio.withAlphaComponent(0.25)]))
+        }
+
+        // Percentage in primary text
+        result.append(NSAttributedString(string: " \(pct)%",
+            attributes: [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]))
+
+        return result
+    }
+
+    // Clean up ugly paths (remove GUIDs, shorten)
+    static func cleanPath(_ path: String) -> String {
+        let components = path.split(separator: "/")
+        // Filter out GUID-like components
+        let cleaned = components.filter { comp in
+            let s = String(comp)
+            // Skip if looks like a GUID: 8-4-4-4-12 hex
+            if s.count > 30 && s.contains("-") {
+                let parts = s.split(separator: "-")
+                if parts.count >= 4 && parts.allSatisfy({ $0.allSatisfy { $0.isHexDigit } }) {
+                    return false
+                }
+            }
+            // Skip .dat/.db numeric suffixes
+            if s.hasPrefix("_") && s.count > 20 { return false }
+            return true
+        }
+        // Show last 2-3 meaningful components
+        let meaningful = Array(cleaned.suffix(3))
+        return meaningful.joined(separator: " / ")
     }
 }
 
@@ -65,6 +123,197 @@ struct BackupStatus: Codable {
     let eta_secs: Int?
     let errors: Int?
     let current_file: String?
+}
+
+// MARK: - Mini Speedometer View (Maranello Ferrari Gauge Style)
+
+class ProgressBarView: NSView {
+    var percent: Double = 0
+    var label: String = ""
+
+    override var intrinsicContentSize: NSSize {
+        return NSSize(width: 250, height: 32)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        let barX: CGFloat = 14
+        let barY: CGFloat = 10
+        let barW: CGFloat = bounds.width - 70
+        let barH: CGFloat = 12
+        let cornerR: CGFloat = barH / 2
+
+        // Background track
+        let bgPath = CGPath(roundedRect: CGRect(x: barX, y: barY, width: barW, height: barH),
+                            cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
+        ctx.addPath(bgPath)
+        ctx.setFillColor(NSColor(white: 0.2, alpha: 0.5).cgColor)
+        ctx.fillPath()
+
+        // Filled portion with gradient: rosso → gold → verde
+        let fillW = max(barW * CGFloat(percent) / 100.0, cornerR * 2)
+        if percent > 0 {
+            let fillRect = CGRect(x: barX, y: barY, width: fillW, height: barH)
+            let fillPath = CGPath(roundedRect: fillRect,
+                                  cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
+
+            ctx.saveGState()
+            ctx.addPath(fillPath)
+            ctx.clip()
+
+            // Gradient: rosso(left) → gold(mid) → verde(right)
+            let colors = [
+                CGColor(red: 0.86, green: 0, blue: 0, alpha: 1.0),       // rosso corsa
+                CGColor(red: 1.0, green: 0.78, blue: 0.17, alpha: 1.0),  // giallo ferrari
+                CGColor(red: 0, green: 0.65, blue: 0.32, alpha: 1.0),    // verde racing
+            ] as CFArray
+            let locations: [CGFloat] = [0.0, 0.5, 1.0]
+
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                          colors: colors, locations: locations) {
+                ctx.drawLinearGradient(gradient,
+                    start: CGPoint(x: barX, y: barY),
+                    end: CGPoint(x: barX + barW, y: barY),
+                    options: [])
+            }
+            ctx.restoreGState()
+        }
+
+        // Percentage text to the right
+        let pctStr = "\(Int(percent))%"
+        let pctFont = NSFont.boldSystemFont(ofSize: 13)
+        let pctAttrs: [NSAttributedString.Key: Any] = [
+            .font: pctFont, .foregroundColor: NSColor.labelColor
+        ]
+        let pctSize = (pctStr as NSString).size(withAttributes: pctAttrs)
+        (pctStr as NSString).draw(
+            at: CGPoint(x: barX + barW + 8, y: barY + (barH - pctSize.height) / 2),
+            withAttributes: pctAttrs)
+    }
+}
+
+class SpeedometerView: NSView {
+    var speedMBps: Double = 0
+    var maxSpeed: Double = 100
+    var etaText: String = ""
+
+    override var intrinsicContentSize: NSSize {
+        return NSSize(width: 220, height: 90)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        let gaugeSize: CGFloat = 76
+        let centerX: CGFloat = gaugeSize / 2 + 12
+        let centerY: CGFloat = gaugeSize / 2 + 2
+        let radius: CGFloat = gaugeSize / 2 - 6
+
+        // Arc: 210° to -30° (240° sweep, open bottom)
+        let startAngle: CGFloat = 210 * .pi / 180
+        let endAngle: CGFloat = -30 * .pi / 180
+        let totalSweep: CGFloat = 240
+
+        // Background arc
+        ctx.setStrokeColor(NSColor(white: 0.25, alpha: 0.5).cgColor)
+        ctx.setLineWidth(5)
+        ctx.addArc(center: CGPoint(x: centerX, y: centerY), radius: radius,
+                   startAngle: startAngle, endAngle: endAngle, clockwise: true)
+        ctx.strokePath()
+
+        // Active arc — gold
+        let valuePct = min(speedMBps / maxSpeed, 1.0)
+        let valueAngle = startAngle - CGFloat(valuePct * Double(totalSweep)) * .pi / 180
+
+        if valuePct > 0.01 {
+            ctx.setStrokeColor(CGColor(red: 1.0, green: 0.78, blue: 0.17, alpha: 1.0))
+            ctx.setLineWidth(5)
+            ctx.addArc(center: CGPoint(x: centerX, y: centerY), radius: radius,
+                       startAngle: startAngle, endAngle: valueAngle, clockwise: true)
+            ctx.strokePath()
+        }
+
+        // Tick marks: 0, 25, 50, 75, 100
+        for i in 0...4 {
+            let tickPct = Double(i) / 4.0
+            let tickAngle = startAngle - CGFloat(tickPct * Double(totalSweep)) * .pi / 180
+            let inner = radius - 8
+            let outer = radius + 1
+            ctx.setStrokeColor(NSColor(white: 0.45, alpha: 0.6).cgColor)
+            ctx.setLineWidth(1)
+            ctx.move(to: CGPoint(x: centerX + cos(tickAngle) * inner,
+                                  y: centerY + sin(tickAngle) * inner))
+            ctx.addLine(to: CGPoint(x: centerX + cos(tickAngle) * outer,
+                                     y: centerY + sin(tickAngle) * outer))
+            ctx.strokePath()
+
+            // Tick labels
+            let label = "\(i * 25)"
+            let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
+            let labelAttrs: [NSAttributedString.Key: Any] = [
+                .font: labelFont,
+                .foregroundColor: NSColor(white: 0.5, alpha: 0.7)
+            ]
+            let labelSize = (label as NSString).size(withAttributes: labelAttrs)
+            let labelR = radius + 8
+            let lx = centerX + cos(tickAngle) * labelR - labelSize.width / 2
+            let ly = centerY + sin(tickAngle) * labelR - labelSize.height / 2
+            (label as NSString).draw(at: CGPoint(x: lx, y: ly), withAttributes: labelAttrs)
+        }
+
+        // Needle — rosso corsa
+        let needleLen = radius - 14
+        let nx = centerX + cos(valueAngle) * needleLen
+        let ny = centerY + sin(valueAngle) * needleLen
+        ctx.setStrokeColor(CGColor(red: 0.86, green: 0, blue: 0, alpha: 1.0))
+        ctx.setLineWidth(2)
+        ctx.move(to: CGPoint(x: centerX, y: centerY))
+        ctx.addLine(to: CGPoint(x: nx, y: ny))
+        ctx.strokePath()
+
+        // Center hub
+        ctx.setFillColor(CGColor(red: 0.86, green: 0, blue: 0, alpha: 1.0))
+        ctx.fillEllipse(in: CGRect(x: centerX - 3, y: centerY - 3, width: 6, height: 6))
+
+        // Speed value — bold center
+        let speedStr = String(format: "%.0f", speedMBps)
+        let speedFont = NSFont.boldSystemFont(ofSize: 16)
+        let speedAttrs: [NSAttributedString.Key: Any] = [
+            .font: speedFont, .foregroundColor: NSColor.labelColor
+        ]
+        let speedSize = (speedStr as NSString).size(withAttributes: speedAttrs)
+        (speedStr as NSString).draw(
+            at: CGPoint(x: centerX - speedSize.width / 2, y: centerY - speedSize.height / 2 - 5),
+            withAttributes: speedAttrs)
+
+        // "MB/s" unit
+        let unitAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 7, weight: .medium),
+            .foregroundColor: NSColor(white: 0.55, alpha: 1.0)
+        ]
+        let unitSize = ("MB/s" as NSString).size(withAttributes: unitAttrs)
+        ("MB/s" as NSString).draw(
+            at: CGPoint(x: centerX - unitSize.width / 2, y: centerY - speedSize.height / 2 - 16),
+            withAttributes: unitAttrs)
+
+        // ETA to the right of the gauge
+        if !etaText.isEmpty {
+            let rightX: CGFloat = gaugeSize + 24
+            let labelAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor(white: 0.55, alpha: 1.0)
+            ]
+            let valueAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: 13),
+                .foregroundColor: NSColor(red: 1.0, green: 0.78, blue: 0.17, alpha: 1.0)
+            ]
+            ("finisce tra" as NSString).draw(at: CGPoint(x: rightX, y: 50), withAttributes: labelAttrs)
+            (etaText as NSString).draw(at: CGPoint(x: rightX, y: 30), withAttributes: valueAttrs)
+        }
+    }
 }
 
 // MARK: - Formatting Helpers
@@ -151,6 +400,12 @@ enum Fmt {
     }
 
     static func speed(_ bps: Int64) -> String {
+        let mbps = Double(bps) / (1024 * 1024)
+        if mbps >= 1000 {
+            return String(format: "%.1f GB/s", mbps / 1024)
+        } else if mbps >= 1 {
+            return String(format: "%.1f MB/s", mbps)
+        }
         return "\(bytes(bps))/s"
     }
 
@@ -480,6 +735,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedDiskDetail: DiskDetail?
     private var diskDetailLastChecked: Date = .distantPast
 
+    private var isDiskConnected: Bool {
+        let dest = cachedConfig.destPath
+        guard !dest.isEmpty else { return false }
+        // Check if the volume root exists
+        if dest.hasPrefix("/Volumes/") {
+            let parts = dest.split(separator: "/", maxSplits: 3)
+            if parts.count >= 2 {
+                let volRoot = "/Volumes/\(parts[1])"
+                return FileManager.default.fileExists(atPath: volRoot)
+            }
+        }
+        return FileManager.default.fileExists(atPath: dest)
+    }
+
     private let statusFilePath: String = {
         let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
         return "\(home)/.local/share/rusty-mac-backup/status.json"
@@ -528,10 +797,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
 
         let symbolName: String
-        if hasError {
-            symbolName = "externaldrive.badge.xmark"
+        if !isDiskConnected {
+            symbolName = "externaldrive.trianglebadge.exclamationmark"
+        } else if hasError {
+            symbolName = "gauge.open.with.lines.needle.84percent.exclamation"
         } else if stale {
-            symbolName = "externaldrive.badge.exclamationmark"
+            symbolName = "gauge.with.dots.needle.bottom.0percent"
         } else {
             symbolName = "externaldrive.fill.badge.checkmark"
         }
@@ -551,28 +822,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard animationTimer == nil else { return }
         animationFrame = 0
 
-        // Use SF Symbol for sync animation
-        let syncImg = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
-                               accessibilityDescription: "Backing up")
-        let driveImg = NSImage(systemSymbolName: "externaldrive.fill",
-                                accessibilityDescription: "Backing up")
-        syncImg?.isTemplate = true
-        driveImg?.isTemplate = true
+        // Ferrari tachometer animation: needle sweeping up as backup progresses
+        let gaugeFrames = [
+            "gauge.with.dots.needle.bottom.0percent",
+            "gauge.with.dots.needle.33percent",
+            "gauge.with.dots.needle.bottom.50percent",
+            "gauge.with.dots.needle.67percent",
+        ]
+        let images = gaugeFrames.compactMap { name -> NSImage? in
+            let img = NSImage(systemSymbolName: name, accessibilityDescription: "Backing up")
+            img?.isTemplate = true
+            return img
+        }
 
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+        guard !images.isEmpty else { return }
+
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
             guard let self = self, let button = self.statusItem.button else { return }
-            self.animationFrame = (self.animationFrame + 1) % 2
-            button.image = self.animationFrame == 0 ? syncImg : driveImg
+            self.animationFrame = (self.animationFrame + 1) % images.count
+            button.image = images[self.animationFrame]
             button.title = ""
         }
         if let button = statusItem.button {
-            button.image = syncImg
+            button.image = images[0]
             button.title = ""
         }
-    }
-
-    private static func rotateImage(_ image: NSImage, degrees: CGFloat) -> NSImage {
-        return image
     }
 
     private func stopAnimation() {
@@ -729,15 +1003,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Normal menu -- config exists and FDA granted
-        // Header
+        // Header with Maranello styling
         let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        header.attributedTitle = MLText.header("RustyMacBackup")
+        if currentStatus?.state == "running" {
+            header.attributedTitle = MLText.build(
+                MLText.colored("RustyMacBackup", MLColor.gold),
+                MLText.small("  LIVE", MLColor.verde)
+            )
+        } else {
+            header.attributedTitle = MLText.header("RustyMacBackup")
+        }
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
 
         if let status = currentStatus, status.state == "running" {
             addRunningSection(to: menu, status: status)
+        } else if !isDiskConnected {
+            addDiskAbsentSection(to: menu)
         } else {
             addIdleSection(to: menu)
         }
@@ -751,30 +1034,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if currentStatus?.state == "running" {
             backupNowItem.attributedTitle = MLText.build(
                 MLText.dot(MLColor.gold),
-                MLText.colored("Backup in Progress...", MLColor.gold)
+                MLText.colored("Backup in corso", MLColor.gold),
+                MLText.small("  stop: \u{2318}B", MLColor.grigio)
+            )
+            backupNowItem.action = #selector(stopBackup)
+        } else if !isDiskConnected {
+            backupNowItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.rosso),
+                MLText.small("Backup Now — disco assente", MLColor.rosso)
             )
             backupNowItem.isEnabled = false
         } else {
             backupNowItem.attributedTitle = MLText.build(
                 MLText.dot(MLColor.verde),
-                MLText.plain("Backup Now")
+                MLText.colored("Backup Now", MLColor.verde)
             )
         }
         menu.addItem(backupNowItem)
 
+        // Open Backup Folder — disabled without disk
         let openItem = NSMenuItem(title: "Open Backup Folder", action: #selector(openBackupFolder), keyEquivalent: "o")
         openItem.keyEquivalentModifierMask = .command
         openItem.target = self
+        if !isDiskConnected {
+            openItem.isEnabled = false
+        }
         menu.addItem(openItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // Schedule submenu
+        // Schedule submenu — always available (it's a preference)
         addScheduleSubmenu(to: menu)
 
         menu.addItem(NSMenuItem.separator())
 
-        // Preferences submenu
+        // Preferences submenu — always available
         addPreferencesSubmenu(to: menu)
 
         menu.addItem(NSMenuItem.separator())
@@ -794,6 +1088,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
+    private func addDiskAbsentSection(to menu: NSMenu) {
+        // Disk name from config
+        let dest = cachedConfig.destPath
+        var diskName = "disco esterno"
+        if dest.hasPrefix("/Volumes/") {
+            let parts = dest.split(separator: "/", maxSplits: 3)
+            if parts.count >= 2 { diskName = String(parts[1]) }
+        }
+
+        // Same structure as idle section but with disk error
+        // Last backup info
+        if let status = currentStatus,
+           let lastStr = status.last_completed,
+           let lastDate = Fmt.parseISO(lastStr) {
+            let elapsed = -lastDate.timeIntervalSinceNow
+            let timeStr = Fmt.relativeTime(from: lastDate)
+            let timeColor: NSColor = elapsed < 86400 ? MLColor.verde
+                : elapsed < 172800 ? MLColor.gold : MLColor.rosso
+
+            let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            lastItem.attributedTitle = MLText.build(
+                MLText.dot(timeColor),
+                MLText.plain("Ultimo backup: "),
+                MLText.colored(timeStr, timeColor)
+            )
+            lastItem.isEnabled = false
+            menu.addItem(lastItem)
+
+            // Duration + files
+            if let dur = status.last_duration_secs, let files = status.files_total {
+                let copiedStr = status.bytes_copied.map { Fmt.bytes($0) } ?? ""
+                let durItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                durItem.attributedTitle = MLText.build(
+                    MLText.small("  "),
+                    MLText.small(Fmt.duration(dur), MLColor.gold),
+                    MLText.small("  ·  ", MLColor.grigio),
+                    MLText.small("\(Fmt.number(files)) file", MLColor.grigio),
+                    copiedStr.isEmpty ? MLText.plain("") : MLText.small("  ·  \(copiedStr)", MLColor.grigio)
+                )
+                durItem.isEnabled = false
+                menu.addItem(durItem)
+            }
+        }
+
+        // Disk status — ROSSO: it's a problem, not a warning
+        let diskItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        diskItem.attributedTitle = MLText.build(
+            MLText.dot(MLColor.rosso),
+            MLText.colored("Disco \"\(diskName)\" non collegato", MLColor.rosso)
+        )
+        diskItem.isEnabled = false
+        menu.addItem(diskItem)
+    }
+
     private func addIdleSection(to menu: NSMenu) {
         // Last backup with color-coded time
         if let status = currentStatus,
@@ -802,16 +1150,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let elapsed = -lastDate.timeIntervalSinceNow
             let timeStr = Fmt.relativeTime(from: lastDate)
             let timeColor: NSColor
-            if elapsed < 86400 {       // <24h green
+            if elapsed < 86400 {       // <24h verde
                 timeColor = MLColor.verde
             } else if elapsed < 172800 { // <48h gold
                 timeColor = MLColor.gold
-            } else {                     // >48h red
+            } else {                     // >48h rosso
                 timeColor = MLColor.rosso
             }
             let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             lastItem.attributedTitle = MLText.build(
-                MLText.plain("Last backup: "),
+                MLText.dot(timeColor),
+                MLText.plain("Ultimo backup: "),
                 MLText.colored(timeStr, timeColor)
             )
             lastItem.isEnabled = false
@@ -819,44 +1168,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             lastItem.attributedTitle = MLText.build(
-                MLText.plain("Last backup: "),
-                MLText.colored("never", MLColor.rosso)
+                MLText.dot(MLColor.rosso),
+                MLText.plain("Ultimo backup: "),
+                MLText.colored("mai", MLColor.rosso)
             )
             lastItem.isEnabled = false
             menu.addItem(lastItem)
         }
 
-        // Duration + files
+        // Duration + files + bytes on one line
         if let status = currentStatus,
            let dur = status.last_duration_secs,
            let files = status.files_total {
             let durItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            let copiedStr = status.bytes_copied.map { Fmt.bytes($0) } ?? ""
             durItem.attributedTitle = MLText.build(
-                MLText.plain("Duration: "),
-                MLText.colored(Fmt.duration(dur), MLColor.gold),
-                MLText.plain(" | "),
-                MLText.colored(Fmt.number(files), MLColor.gold),
-                MLText.plain(" files")
+                MLText.small("  "),
+                MLText.small(Fmt.duration(dur), MLColor.gold),
+                MLText.small("  ·  ", MLColor.grigio),
+                MLText.small("\(Fmt.number(files)) file", MLColor.grigio),
+                copiedStr.isEmpty ? MLText.plain("") : MLText.small("  ·  \(copiedStr)", MLColor.grigio)
             )
             durItem.isEnabled = false
             menu.addItem(durItem)
         }
 
-        // Disk info with volume name and encryption
+        // Disk info with semantic health colors
         refreshDiskDetailIfStale()
         if let detail = cachedDiskDetail {
             let diskItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            // Parse free space for color coding
+            let freeColor: NSColor
+            let fs = detail.freeSpace.lowercased()
+            if fs.contains("tb") || (fs.contains("gb") && Double(fs.replacingOccurrences(of: "[^0-9.,]", with: "", options: .regularExpression).replacingOccurrences(of: ",", with: ".")) ?? 0 > 50) {
+                freeColor = MLColor.verde     // >50GB = healthy
+            } else if fs.contains("gb") {
+                freeColor = MLColor.warning   // <50GB = warning
+            } else {
+                freeColor = MLColor.rosso     // MB = critical
+            }
             diskItem.attributedTitle = MLText.build(
-                MLText.plain("Disk: "),
-                MLText.bold(detail.volumeName),
-                MLText.plain(" -- "),
-                MLText.colored(detail.freeSpace + " free", MLColor.verde)
+                MLText.small("  ", MLColor.grigio),
+                MLText.small(detail.volumeName, MLColor.info),
+                MLText.small("  \(detail.freeSpace) liberi", freeColor)
             )
             diskItem.isEnabled = false
             menu.addItem(diskItem)
         }
 
-        // Next backup
+        // Next scheduled backup
         if scheduleEnabled, let status = currentStatus,
            let lastStr = status.last_completed,
            let _ = Fmt.parseISO(lastStr) {
@@ -864,19 +1224,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                         lastCompleted: Fmt.parseISO(lastStr))
             let nextItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             nextItem.attributedTitle = MLText.build(
-                MLText.plain("Next: "),
-                MLText.colored(nextStr, MLColor.gold)
+                MLText.small("  Prossimo: ", MLColor.grigio),
+                MLText.small(nextStr, MLColor.gold)
             )
             nextItem.isEnabled = false
             menu.addItem(nextItem)
         }
 
-        // Show errors if any
+        // Skipped files (warning, not error — SIP-protected system files)
         if let status = currentStatus, let errs = status.errors, errs > 0 {
             let errItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             errItem.attributedTitle = MLText.build(
-                MLText.dot(MLColor.rosso),
-                MLText.colored("\(errs) error\(errs == 1 ? "" : "s") in last backup", MLColor.rosso)
+                MLText.small("  \(errs) file di sistema ignorati", MLColor.warning),
+                MLText.small(" (normale)", MLColor.grigio)
             )
             errItem.isEnabled = false
             menu.addItem(errItem)
@@ -888,68 +1248,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let total = status.files_total ?? 1
         let pct = total > 0 ? Int(Double(done) / Double(total) * 100) : 0
 
-        // Progress bar style: ████░░░░ 24%
-        let barLen = 20
-        let filled = pct * barLen / 100
-        let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: barLen - filled)
-
+        // Gradient progress bar (rosso → gold → verde)
+        let progressBar = ProgressBarView(frame: NSRect(x: 0, y: 0, width: 250, height: 32))
+        progressBar.percent = Double(pct)
         let progressItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        progressItem.attributedTitle = MLText.build(
-            MLText.colored("  \(bar) ", MLColor.gold),
-            MLText.colored("\(pct)%", MLColor.gold)
-        )
-        progressItem.isEnabled = false
+        progressItem.view = progressBar
         menu.addItem(progressItem)
 
-        // Files count
+        // Bytes copied (accent) + file count (muted)
+        let copiedBytes = status.bytes_copied ?? 0
+        let copiedStr = Fmt.bytes(copiedBytes)
         let filesItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         filesItem.attributedTitle = MLText.build(
-            MLText.plain("  "),
-            MLText.colored(Fmt.number(done), MLColor.verde),
-            MLText.plain(" di "),
-            MLText.plain(Fmt.number(total)),
-            MLText.plain(" file")
+            MLText.colored("  \(copiedStr)", MLColor.gold),
+            MLText.plain(" copiati  "),
+            MLText.small("\(Fmt.number(done)) / \(Fmt.number(total)) file", MLColor.grigio)
         )
         filesItem.isEnabled = false
         menu.addItem(filesItem)
 
-        // ETA + speed on same line
-        var detailParts: [NSAttributedString] = [MLText.plain("  ")]
-        if let eta = status.eta_secs, eta > 0 {
-            detailParts.append(MLText.plain("Finisce tra "))
-            detailParts.append(MLText.colored(Fmt.duration(Double(eta)), MLColor.gold))
-        }
+        // Ferrari speedometer gauge
+        let speedView = SpeedometerView(frame: NSRect(x: 0, y: 0, width: 220, height: 90))
         if let bps = status.bytes_per_sec, bps > 0 {
-            if detailParts.count > 1 { detailParts.append(MLText.plain("  ·  ")) }
-            detailParts.append(MLText.colored(Fmt.speed(bps), MLColor.verde))
+            speedView.speedMBps = Double(bps) / (1024 * 1024)
         }
-        if detailParts.count > 1 {
-            let combined = NSMutableAttributedString()
-            for part in detailParts { combined.append(part) }
-            let detailItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            detailItem.attributedTitle = combined
-            detailItem.isEnabled = false
-            menu.addItem(detailItem)
+        if let eta = status.eta_secs, eta > 0 {
+            speedView.etaText = Fmt.duration(Double(eta))
         }
+        let speedItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        speedItem.view = speedView
+        menu.addItem(speedItem)
 
+        // Current file — cleaned up
         if let file = status.current_file, !file.isEmpty {
-            // Show just the last 2 path components (folder/file)
-            let components = file.split(separator: "/")
-            let short = components.count > 2
-                ? String(components.suffix(2).joined(separator: "/"))
-                : file
+            let clean = MLText.cleanPath(file)
             let fileItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            fileItem.attributedTitle = MLText.small("  \(short)")
+            fileItem.attributedTitle = MLText.small("  \(clean)", MLColor.grigio)
             fileItem.isEnabled = false
             menu.addItem(fileItem)
         }
 
+        // Skipped files: warning (not error!) — these are normal SIP-protected files
         if let errs = status.errors, errs > 0 {
             let errItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             errItem.attributedTitle = MLText.build(
-                MLText.plain("  "),
-                MLText.dot(MLColor.rosso),
-                MLText.colored("\(errs) errori", MLColor.rosso)
+                MLText.small("  ", MLColor.warning),
+                MLText.small("\(errs) file protetti ignorati", MLColor.warning),
+                MLText.small(" (normale)", MLColor.grigio)
             )
             errItem.isEnabled = false
             menu.addItem(errItem)
@@ -1282,7 +1627,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Actions
 
     @objc private func backupNow() {
-        guard currentStatus?.state != "running" else { return }
+        guard currentStatus?.state != "running" else {
+            stopBackup()
+            return
+        }
 
         // Clear old error log before starting
         let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
@@ -1311,6 +1659,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     body: String(result.prefix(200))
                 )
             }
+        }
+    }
+
+    @objc private func stopBackup() {
+        Shell.runAsync("rustyback stop 2>&1") { [weak self] _ in
+            self?.pollStatus()
         }
     }
 

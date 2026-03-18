@@ -29,6 +29,7 @@ const MIN_FREE_SPACE: u64 = 1_073_741_824;
 // macOS I/O policy constants (sys/resource.h)
 const IOPOL_TYPE_DISK: i32 = 1;
 const IOPOL_SCOPE_PROCESS: i32 = 0;
+const IOPOL_DEFAULT: i32 = 0;
 const IOPOL_UTILITY: i32 = 4;
 const IOPOL_THROTTLE: i32 = 3;
 
@@ -81,6 +82,63 @@ pub fn status_file_path() -> PathBuf {
         .join(".local/share/rusty-mac-backup/status.json")
 }
 
+pub fn errors_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    PathBuf::from(home)
+        .join(".local/share/rusty-mac-backup/errors.json")
+}
+
+fn write_errors(errors: &[String]) {
+    let path = errors_file_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    // Categorize errors for easy consumption
+    let mut permission_denied: Vec<&str> = Vec::new();
+    let mut not_found: Vec<&str> = Vec::new();
+    let mut io_errors: Vec<&str> = Vec::new();
+    let mut other: Vec<&str> = Vec::new();
+
+    for err in errors {
+        if err.contains("Operation not permitted") || err.contains("Permission denied") {
+            permission_denied.push(err);
+        } else if err.contains("No such file") {
+            not_found.push(err);
+        } else if err.contains("Input/output error") || err.contains("I/O error") {
+            io_errors.push(err);
+        } else {
+            other.push(err);
+        }
+    }
+
+    let json = serde_json::json!({
+        "total": errors.len(),
+        "timestamp": Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        "categories": {
+            "permission_denied": {
+                "count": permission_denied.len(),
+                "files": permission_denied.iter().take(50).collect::<Vec<_>>()
+            },
+            "not_found": {
+                "count": not_found.len(),
+                "files": not_found.iter().take(50).collect::<Vec<_>>()
+            },
+            "io_error": {
+                "count": io_errors.len(),
+                "files": io_errors.iter().take(50).collect::<Vec<_>>()
+            },
+            "other": {
+                "count": other.len(),
+                "files": other.iter().take(50).collect::<Vec<_>>()
+            }
+        }
+    });
+
+    if let Ok(json_str) = serde_json::to_string_pretty(&json) {
+        let _ = fs::write(&path, json_str);
+    }
+}
+
 fn read_previous_status() -> BackupStatusFile {
     let path = status_file_path();
     fs::read_to_string(&path)
@@ -108,9 +166,9 @@ pub fn write_error_status() {
     });
 }
 
-/// Set I/O priority: THROTTLE on battery, UTILITY when plugged in
+/// Set I/O priority: THROTTLE on battery, DEFAULT (full speed) when plugged in
 fn set_io_priority() {
-    let policy = if is_on_battery() { IOPOL_THROTTLE } else { IOPOL_UTILITY };
+    let policy = if is_on_battery() { IOPOL_THROTTLE } else { IOPOL_DEFAULT };
     unsafe {
         setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, policy);
     }
@@ -489,6 +547,9 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     if let Ok(fe) = file_errs.into_inner() {
         all_errors.extend(fe);
     }
+
+    // Write errors to disk for menu bar and CLI consumption
+    write_errors(&all_errors);
 
     // Write "idle" status with completion info
     let duration = start_time.elapsed();

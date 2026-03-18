@@ -71,6 +71,12 @@ enum Commands {
         #[command(subcommand)]
         action: ScheduleAction,
     },
+    /// Show errors from the last backup
+    Errors {
+        /// Show full file paths (default: first 20)
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -157,6 +163,7 @@ fn main() -> Result<()> {
         Commands::Restore { name, path, to } => cmd_restore(&cli.config, &name, path, to)?,
         Commands::Config { action } => cmd_config(&cli.config, action)?,
         Commands::Schedule { action } => cmd_schedule(action)?,
+        Commands::Errors { all } => cmd_errors(all)?,
     }
 
     Ok(())
@@ -974,6 +981,57 @@ fn save_config(path: &std::path::Path, config: &config::Config) -> Result<()> {
     out.push_str(&format!("monthly = {}\n", config.retention.monthly));
 
     std::fs::write(path, out)?;
+    Ok(())
+}
+
+fn cmd_errors(show_all: bool) -> Result<()> {
+    let errors_path = crate::backup::errors_file_path();
+    if !errors_path.exists() {
+        println!("{}", "No error log found. Run a backup first.".yellow());
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&errors_path)?;
+    let json: serde_json::Value = serde_json::from_str(&content)?;
+
+    let total = json["total"].as_u64().unwrap_or(0);
+    if total == 0 {
+        println!("{}", "No errors in last backup.".green());
+        return Ok(());
+    }
+
+    println!("{} file non copiati nell'ultimo backup\n", total.to_string().yellow());
+
+    let categories = &json["categories"];
+    for (key, label) in &[
+        ("permission_denied", "Permesso negato (SIP/sistema)"),
+        ("not_found", "File non trovato (spostato durante backup)"),
+        ("io_error", "Errore I/O (disco)"),
+        ("other", "Altro"),
+    ] {
+        if let Some(cat) = categories.get(key) {
+            let count = cat["count"].as_u64().unwrap_or(0);
+            if count == 0 { continue; }
+            println!("  {} {} — {}", "●".yellow(), label, count);
+            if show_all {
+                if let Some(files) = cat["files"].as_array() {
+                    for f in files {
+                        if let Some(s) = f.as_str() {
+                            println!("    {}", s.dimmed());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !show_all && total > 0 {
+        println!("\n{}", "Usa --all per vedere i file specifici".dimmed());
+    }
+
+    println!("\n{}", "Nota: la maggior parte sono file di sistema protetti da SIP.".dimmed());
+    println!("{}", "Questo è normale su macOS e non indica un problema.".dimmed());
+
     Ok(())
 }
 
