@@ -145,18 +145,187 @@ fn cmd_init() -> Result<()> {
     let config_path = config::Config::default_path();
     if config_path.exists() {
         println!("{} Config already exists: {}", "⚠".yellow(), config_path.display());
+        println!("   Run `rustyback config edit` to modify it.");
         return Ok(());
     }
+
+    println!("{}", "🦀 RustyMacBackup Setup".bold().cyan());
+    println!();
+
+    // Detect home directory
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    println!("  Source: {}", home.green());
+
+    // Discover available external volumes
+    println!();
+    println!("{}", "Scanning for backup disks...".dimmed());
+    let volumes = discover_volumes()?;
+
+    if volumes.is_empty() {
+        anyhow::bail!(
+            "No external disks found!\n\
+             Connect an external drive and run `rustyback init` again."
+        );
+    }
+
+    // Show volume menu
+    println!();
+    println!("{}", "Available disks:".bold());
+    for (i, (name, path, size)) in volumes.iter().enumerate() {
+        println!("  {}. {} — {} free ({})", 
+            (i + 1).to_string().cyan(), 
+            name.bold(), 
+            format_bytes(*size),
+            path.display().to_string().dimmed()
+        );
+    }
+    println!();
+
+    // Ask user to pick
+    let choice = if volumes.len() == 1 {
+        println!("Only one disk found, using: {}", volumes[0].0.bold());
+        0
+    } else {
+        print!("Select disk [1-{}]: ", volumes.len());
+        std::io::Write::flush(&mut std::io::stdout())?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let num: usize = input.trim().parse().unwrap_or(0);
+        if num < 1 || num > volumes.len() {
+            anyhow::bail!("Invalid choice. Run `rustyback init` again.");
+        }
+        num - 1
+    };
+
+    let (_vol_name, vol_path, _) = &volumes[choice];
+    let backup_dir = vol_path.join("RustyMacBackup");
+
+    // Create backup directory and fix permissions
+    println!();
+    println!("  Creating {} ...", backup_dir.display().to_string().cyan());
+    ensure_writable_dir(&backup_dir)?;
+
+    // Generate config
+    let config_content = generate_default_config(&home, &backup_dir);
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    std::fs::write(&config_path, &config_content)?;
 
-    let default_config = r#"[source]
-path = "/Users/roberdan"
+    println!();
+    println!("{}", "━".repeat(50).dimmed());
+    println!("{} Setup complete!", "✅".green());
+    println!("  Source:  {}", home.green());
+    println!("  Dest:    {}", backup_dir.display().to_string().green());
+    println!("  Config:  {}", config_path.display().to_string().dimmed());
+    println!();
+    println!("  Run {} to start your first backup", "rustyback backup".bold());
+    println!("  Run {} to enable automatic hourly backups", "rustyback schedule on".bold());
+
+    Ok(())
+}
+
+fn discover_volumes() -> Result<Vec<(String, PathBuf, u64)>> {
+    let mut volumes = Vec::new();
+    let volumes_dir = std::path::Path::new("/Volumes");
+
+    if !volumes_dir.exists() {
+        return Ok(volumes);
+    }
+
+    for entry in std::fs::read_dir(volumes_dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip the boot volume
+        if name == "Macintosh HD" || name == "Macintosh HD - Data" {
+            continue;
+        }
+
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Get free space
+        let free = get_volume_free_space(&path).unwrap_or(0);
+        if free > 0 {
+            volumes.push((name, path, free));
+        }
+    }
+
+    // Sort by name
+    volumes.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(volumes)
+}
+
+fn get_volume_free_space(path: &std::path::Path) -> Result<u64> {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    let c_path = CString::new(path.to_string_lossy().as_bytes())?;
+    let mut stat: MaybeUninit<libc::statfs> = MaybeUninit::uninit();
+    let result = unsafe { libc::statfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if result != 0 {
+        anyhow::bail!("statfs failed");
+    }
+    let stat = unsafe { stat.assume_init() };
+    Ok(stat.f_bavail as u64 * stat.f_bsize as u64)
+}
+
+fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
+    // Try creating the directory directly first
+    match std::fs::create_dir_all(path) {
+        Ok(_) => {
+            // Test write access
+            let test_file = path.join(".rmb-write-test");
+            match std::fs::write(&test_file, "test") {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&test_file);
+                    return Ok(());
+                }
+                Err(_) => {} // Fall through to sudo
+            }
+        }
+        Err(_) => {} // Fall through to sudo
+    }
+
+    // Need elevated permissions — use sudo
+    println!("  {} Need permissions to write to disk (sudo required)", "🔑".to_string());
+
+    // Fix parent volume permissions
+    if let Some(parent) = path.parent() {
+        std::process::Command::new("sudo")
+            .args(["chmod", "775", &parent.to_string_lossy()])
+            .status()?;
+        let user = std::env::var("USER").unwrap_or_else(|_| "roberdan".to_string());
+        std::process::Command::new("sudo")
+            .args(["chown", &format!("{}:staff", user), &parent.to_string_lossy()])
+            .status()?;
+    }
+
+    // Create and set permissions on backup dir
+    std::fs::create_dir_all(path)?;
+    let user = std::env::var("USER").unwrap_or_else(|_| "roberdan".to_string());
+    std::process::Command::new("sudo")
+        .args(["chown", "-R", &format!("{}:staff", user), &path.to_string_lossy()])
+        .status()?;
+
+    // Verify
+    let test_file = path.join(".rmb-write-test");
+    std::fs::write(&test_file, "test")?;
+    std::fs::remove_file(&test_file)?;
+
+    println!("  {} Permissions set", "✅".green());
+    Ok(())
+}
+
+fn generate_default_config(home: &str, backup_dir: &std::path::Path) -> String {
+    format!(r#"[source]
+path = "{home}"
 
 [destination]
-path = "/Volumes/RoberdanBCK 1/RustyMacBackup"
+path = "{dest}"
 
 [exclude]
 patterns = [
@@ -210,12 +379,7 @@ hourly = 24
 daily = 30
 weekly = 52
 monthly = 0
-"#;
-
-    std::fs::write(&config_path, default_config)?;
-    println!("{} Config created: {}", "✅".green(), config_path.display());
-    println!("   Edit it, then run: {}", "rustyback backup".bold());
-    Ok(())
+"#, home = home, dest = backup_dir.display())
 }
 
 fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
@@ -226,6 +390,9 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     println!("   Source: {}", config.source.path.display());
     println!("   Dest:   {}", config.destination.path.display());
     println!();
+
+    // Ensure destination is writable before starting
+    ensure_writable_dir(&config.destination.path)?;
 
     let stats = backup::run_backup(&config)?;
     let elapsed = start.elapsed();
