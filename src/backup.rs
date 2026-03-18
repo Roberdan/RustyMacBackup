@@ -144,7 +144,7 @@ fn cleanup_stale_in_progress(dest_base: &Path) -> Result<()> {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with(".in-progress-") && entry.file_type()?.is_dir() {
-            println!("  {} removing stale {}", "\u{1f9f9}".to_string(), name);
+            println!("  {} removing stale {}", "x".red(), name);
             fs::remove_dir_all(entry.path())?;
         }
     }
@@ -244,7 +244,7 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
         };
 
         if stale {
-            println!("  {} removing stale lock (process no longer running)", "🧹".to_string());
+            println!("  {} removing stale lock (process no longer running)", "x".red());
             let _ = fs::remove_file(&lock_path);
         } else {
             anyhow::bail!("Another backup is in progress (lock file exists: {})", lock_path.display());
@@ -253,14 +253,24 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     fs::write(&lock_path, format!("pid:{}\nstarted:{}\n", std::process::id(), timestamp))?;
 
     let start_time = Instant::now();
-    let started_at = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let started_at = Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
     let prev_status = read_previous_status();
 
-    // Phase 1: Single-pass directory walk (replaces separate count + process passes)
-    println!("{}", "Scanning files...".dimmed());
+    // Phase 1: Single-pass directory walk with exclude pruning
+    // filter_entry() prevents WalkDir from descending into excluded directories,
+    // which is critical for performance (avoids walking Library/Caches, node_modules, etc.)
+    let scan_pb = ProgressBar::new_spinner();
+    scan_pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} Scanning... {msg}")
+            .unwrap(),
+    );
+    scan_pb.enable_steady_tick(std::time::Duration::from_millis(120));
+
     let mut dir_entries: Vec<CollectedEntry> = Vec::new();
     let mut file_entries: Vec<CollectedEntry> = Vec::new();
     let mut source_errors: Vec<String> = Vec::new();
+    let mut scan_count: u64 = 0;
 
     for source in &sources {
         if !source.exists() {
@@ -269,9 +279,18 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
         }
 
         let prefix = source.strip_prefix("/").unwrap_or(source);
+        let source_path: &Path = source.as_ref();
 
         for entry in WalkDir::new(source)
             .into_iter()
+            .filter_entry(|e| {
+                let path = e.path();
+                match path.strip_prefix(source_path) {
+                    Ok(r) if r.as_os_str().is_empty() => true,
+                    Ok(r) => !filter.is_excluded(r),
+                    Err(_) => true,
+                }
+            })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
@@ -279,10 +298,6 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-
-            if filter.is_excluded(relative) {
-                continue;
-            }
 
             let dest_path = in_progress.join(prefix).join(relative);
             let link_relative = prefix.join(relative);
@@ -300,8 +315,29 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
                     link_relative,
                 });
             }
+
+            scan_count += 1;
+            if scan_count % 5_000 == 0 {
+                scan_pb.set_message(format!(
+                    "{} entries ({} files, {} dirs)",
+                    scan_count, file_entries.len(), dir_entries.len()
+                ));
+            }
         }
     }
+
+    scan_pb.finish_and_clear();
+
+    println!(
+        "{}",
+        format!(
+            "Found {} files, {} dirs (scanned in {:.1}s)",
+            file_entries.len(),
+            dir_entries.len(),
+            start_time.elapsed().as_secs_f64()
+        )
+        .dimmed()
+    );
 
     let total_entries = (dir_entries.len() + file_entries.len()) as u64;
     let file_count = file_entries.len() as u64;
@@ -428,7 +464,7 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     if disk_disconnected.load(Ordering::Relaxed) {
         let _ = fs::remove_file(&lock_path);
         write_error_status();
-        anyhow::bail!("💾 Backup disk was disconnected during backup!");
+        anyhow::bail!("Backup disk was disconnected during backup!");
     }
 
     let files_hardlinked = a_hardlinked.load(Ordering::Relaxed);
@@ -456,7 +492,7 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
 
     // Write "idle" status with completion info
     let duration = start_time.elapsed();
-    let completed_at = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let completed_at = Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
     write_status(&BackupStatusFile {
         state: "idle".to_string(),
         started_at,

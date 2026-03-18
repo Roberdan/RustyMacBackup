@@ -1,6 +1,56 @@
 import Cocoa
 import UserNotifications
 
+// MARK: - Maranello Luce Design Colors
+
+enum MLColor {
+    static let gold    = NSColor(red: 0xFF/255, green: 0xC7/255, blue: 0x2C/255, alpha: 1) // #FFC72C
+    static let rosso   = NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1) // #DC0000
+    static let verde   = NSColor(red: 0x00/255, green: 0xA6/255, blue: 0x51/255, alpha: 1) // #00A651
+    static let nero    = NSColor(red: 0x11/255, green: 0x11/255, blue: 0x11/255, alpha: 1) // #111111
+    static let avorio  = NSColor(red: 0xFA/255, green: 0xF3/255, blue: 0xE6/255, alpha: 1) // #FAF3E6
+    static let dimmed  = NSColor.secondaryLabelColor
+}
+
+// MARK: - Attributed String Helpers
+
+enum MLText {
+    static let headerFont = NSFont.boldSystemFont(ofSize: 13)
+    static let bodyFont   = NSFont.menuFont(ofSize: 13)
+    static let smallFont  = NSFont.menuFont(ofSize: 11)
+    static let boldFont   = NSFont.boldSystemFont(ofSize: 13)
+
+    static func header(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: headerFont])
+    }
+
+    static func plain(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: bodyFont])
+    }
+
+    static func colored(_ text: String, _ color: NSColor) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: bodyFont, .foregroundColor: color])
+    }
+
+    static func bold(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: boldFont])
+    }
+
+    static func small(_ text: String, _ color: NSColor = MLColor.dimmed) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: smallFont, .foregroundColor: color])
+    }
+
+    static func dot(_ color: NSColor) -> NSAttributedString {
+        colored("\u{25CF} ", color)
+    }
+
+    static func build(_ parts: NSAttributedString...) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for part in parts { result.append(part) }
+        return result
+    }
+}
+
 // MARK: - Status Model
 
 struct BackupStatus: Codable {
@@ -32,8 +82,25 @@ enum Fmt {
         return f
     }()
 
+    private static let localFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    private static let localWithTZFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssxxx"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
     static func parseISO(_ s: String) -> Date? {
-        return isoFormatter.date(from: s) ?? isoFormatterNoFrac.date(from: s)
+        return isoFormatter.date(from: s)
+            ?? isoFormatterNoFrac.date(from: s)
+            ?? localWithTZFormatter.date(from: s)
+            ?? localFormatter.date(from: s)
     }
 
     static func relativeTime(from date: Date) -> String {
@@ -288,7 +355,7 @@ struct VolumeInfo {
     let isEncrypted: Bool
 
     var freeSpaceFormatted: String { Fmt.bytes(freeSpace) }
-    var encryptionIcon: String { isEncrypted ? "🔒" : "⚠️" }
+    var encryptionLabel: String { isEncrypted ? "Encrypted" : "Not encrypted" }
 }
 
 enum VolumeScanner {
@@ -335,7 +402,7 @@ struct DiskDetail {
     let isEncrypted: Bool
 
     var summary: String {
-        "\(volumeName) — \(freeSpace) free \(isEncrypted ? "🔒" : "⚠️")"
+        "\(volumeName) -- \(freeSpace) free"
     }
 }
 
@@ -461,7 +528,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.title = ""
         } else {
             button.image = nil
-            button.title = hasError ? "⚠" : "💾"
+            button.title = "RMB"
         }
     }
 
@@ -588,8 +655,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hasFullDiskAccess = checkFullDiskAccess()
 
         if !configExists {
-            // No config — show setup required
-            let header = NSMenuItem(title: "⚠️ Setup Required", action: nil, keyEquivalent: "")
+            // No config -- show setup required
+            let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            header.attributedTitle = MLText.build(
+                MLText.dot(MLColor.rosso),
+                MLText.colored("Setup Required", MLColor.rosso)
+            )
             header.isEnabled = false
             menu.addItem(header)
             menu.addItem(NSMenuItem.separator())
@@ -612,12 +683,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !hasFullDiskAccess {
             // Config exists but no FDA
-            let header = NSMenuItem(title: "RustyMacBackup", action: nil, keyEquivalent: "")
+            let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            header.attributedTitle = MLText.header("RustyMacBackup")
             header.isEnabled = false
             menu.addItem(header)
             menu.addItem(NSMenuItem.separator())
 
-            let fdaItem = NSMenuItem(title: "⚠️ Full Disk Access Required", action: nil, keyEquivalent: "")
+            let fdaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            fdaItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.rosso),
+                MLText.colored("Full Disk Access Required", MLColor.rosso)
+            )
             fdaItem.isEnabled = false
             menu.addItem(fdaItem)
 
@@ -637,9 +713,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Normal menu — config exists and FDA granted
+        // Normal menu -- config exists and FDA granted
         // Header
-        let header = NSMenuItem(title: "RustyMacBackup", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        header.attributedTitle = MLText.header("RustyMacBackup")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
@@ -657,14 +734,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         backupNowItem.keyEquivalentModifierMask = .command
         backupNowItem.target = self
         if currentStatus?.state == "running" {
-            backupNowItem.title = "⏳ Backup in Progress…"
+            backupNowItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.gold),
+                MLText.colored("Backup in Progress...", MLColor.gold)
+            )
             backupNowItem.isEnabled = false
         } else {
-            backupNowItem.title = "● Backup Now"
+            backupNowItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.verde),
+                MLText.plain("Backup Now")
+            )
         }
         menu.addItem(backupNowItem)
 
-        let openItem = NSMenuItem(title: "  Open Backup Folder", action: #selector(openBackupFolder), keyEquivalent: "o")
+        let openItem = NSMenuItem(title: "Open Backup Folder", action: #selector(openBackupFolder), keyEquivalent: "o")
         openItem.keyEquivalentModifierMask = .command
         openItem.target = self
         menu.addItem(openItem)
@@ -681,14 +764,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let logItem = NSMenuItem(title: "  View Backup Log", action: #selector(viewLog), keyEquivalent: "")
+        let logItem = NSMenuItem(title: "View Backup Log", action: #selector(viewLog), keyEquivalent: "")
         logItem.target = self
         menu.addItem(logItem)
 
         menu.addItem(NSMenuItem.separator())
 
         // Quit
-        let quitItem = NSMenuItem(title: "  Quit", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = .command
         quitItem.target = self
         menu.addItem(quitItem)
@@ -697,23 +780,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func addIdleSection(to menu: NSMenu) {
-        // Last backup
-        var lastLine = "Last backup: never"
+        // Last backup with color-coded time
         if let status = currentStatus,
            let lastStr = status.last_completed,
            let lastDate = Fmt.parseISO(lastStr) {
-            lastLine = "Last backup: \(Fmt.relativeTime(from: lastDate))"
+            let elapsed = -lastDate.timeIntervalSinceNow
+            let timeStr = Fmt.relativeTime(from: lastDate)
+            let timeColor: NSColor
+            if elapsed < 86400 {       // <24h green
+                timeColor = MLColor.verde
+            } else if elapsed < 172800 { // <48h gold
+                timeColor = MLColor.gold
+            } else {                     // >48h red
+                timeColor = MLColor.rosso
+            }
+            let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            lastItem.attributedTitle = MLText.build(
+                MLText.plain("Last backup: "),
+                MLText.colored(timeStr, timeColor)
+            )
+            lastItem.isEnabled = false
+            menu.addItem(lastItem)
+        } else {
+            let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            lastItem.attributedTitle = MLText.build(
+                MLText.plain("Last backup: "),
+                MLText.colored("never", MLColor.rosso)
+            )
+            lastItem.isEnabled = false
+            menu.addItem(lastItem)
         }
-        let lastItem = NSMenuItem(title: lastLine, action: nil, keyEquivalent: "")
-        lastItem.isEnabled = false
-        menu.addItem(lastItem)
 
         // Duration + files
         if let status = currentStatus,
            let dur = status.last_duration_secs,
            let files = status.files_total {
-            let durLine = "Duration: \(Fmt.duration(dur)) | \(Fmt.number(files)) files"
-            let durItem = NSMenuItem(title: durLine, action: nil, keyEquivalent: "")
+            let durItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            durItem.attributedTitle = MLText.build(
+                MLText.plain("Duration: "),
+                MLText.colored(Fmt.duration(dur), MLColor.gold),
+                MLText.plain(" | "),
+                MLText.colored(Fmt.number(files), MLColor.gold),
+                MLText.plain(" files")
+            )
             durItem.isEnabled = false
             menu.addItem(durItem)
         }
@@ -721,7 +830,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Disk info with volume name and encryption
         refreshDiskDetailIfStale()
         if let detail = cachedDiskDetail {
-            let diskItem = NSMenuItem(title: "Disk: \(detail.summary)", action: nil, keyEquivalent: "")
+            let diskItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            diskItem.attributedTitle = MLText.build(
+                MLText.plain("Disk: "),
+                MLText.bold(detail.volumeName),
+                MLText.plain(" -- "),
+                MLText.colored(detail.freeSpace + " free", MLColor.verde)
+            )
             diskItem.isEnabled = false
             menu.addItem(diskItem)
         }
@@ -732,15 +847,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
            let _ = Fmt.parseISO(lastStr) {
             let nextStr = Fmt.timeUntil(minutes: scheduleIntervalMinutes,
                                         lastCompleted: Fmt.parseISO(lastStr))
-            let nextItem = NSMenuItem(title: "Next: \(nextStr)", action: nil, keyEquivalent: "")
+            let nextItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            nextItem.attributedTitle = MLText.build(
+                MLText.plain("Next: "),
+                MLText.colored(nextStr, MLColor.gold)
+            )
             nextItem.isEnabled = false
             menu.addItem(nextItem)
         }
 
         // Show errors if any
         if let status = currentStatus, let errs = status.errors, errs > 0 {
-            let errItem = NSMenuItem(title: "⚠ \(errs) error\(errs == 1 ? "" : "s") in last backup",
-                                     action: nil, keyEquivalent: "")
+            let errItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            errItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.rosso),
+                MLText.colored("\(errs) error\(errs == 1 ? "" : "s") in last backup", MLColor.rosso)
+            )
             errItem.isEnabled = false
             menu.addItem(errItem)
         }
@@ -751,37 +873,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let total = status.files_total ?? 1
         let pct = total > 0 ? Int(Double(done) / Double(total) * 100) : 0
 
-        let progressLine = "⏳ Backing up… \(pct)% (\(Fmt.number(done))/\(Fmt.number(total)))"
-        let progressItem = NSMenuItem(title: progressLine, action: nil, keyEquivalent: "")
+        let progressItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        progressItem.attributedTitle = MLText.build(
+            MLText.dot(MLColor.gold),
+            MLText.plain("Backing up... "),
+            MLText.colored("\(pct)%", MLColor.gold),
+            MLText.plain(" (\(Fmt.number(done))/\(Fmt.number(total)))")
+        )
         progressItem.isEnabled = false
         menu.addItem(progressItem)
 
-        var detailParts: [String] = []
+        var detailParts: [NSAttributedString] = []
         if let eta = status.eta_secs {
-            detailParts.append("ETA: \(Fmt.duration(Double(eta)))")
+            detailParts.append(MLText.plain("ETA: "))
+            detailParts.append(MLText.colored(Fmt.duration(Double(eta)), MLColor.gold))
         }
         if let bps = status.bytes_per_sec, bps > 0 {
-            detailParts.append(Fmt.speed(bps))
+            if !detailParts.isEmpty { detailParts.append(MLText.plain(" | ")) }
+            detailParts.append(MLText.colored(Fmt.speed(bps), MLColor.gold))
         }
         if !detailParts.isEmpty {
-            let detailItem = NSMenuItem(title: "   \(detailParts.joined(separator: " | "))",
-                                        action: nil, keyEquivalent: "")
+            let combined = NSMutableAttributedString(string: "   ")
+            for part in detailParts { combined.append(part) }
+            let detailItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            detailItem.attributedTitle = combined
             detailItem.isEnabled = false
             menu.addItem(detailItem)
         }
 
         if let file = status.current_file, !file.isEmpty {
             let truncated = file.count > 40
-                ? "…" + String(file.suffix(39))
+                ? "..." + String(file.suffix(39))
                 : file
-            let fileItem = NSMenuItem(title: "   \(truncated)", action: nil, keyEquivalent: "")
+            let fileItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            fileItem.attributedTitle = MLText.small("   \(truncated)")
             fileItem.isEnabled = false
             menu.addItem(fileItem)
         }
 
         if let errs = status.errors, errs > 0 {
-            let errItem = NSMenuItem(title: "   ⚠ \(errs) error\(errs == 1 ? "" : "s")",
-                                     action: nil, keyEquivalent: "")
+            let errItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            errItem.attributedTitle = MLText.build(
+                MLText.plain("   "),
+                MLText.dot(MLColor.rosso),
+                MLText.colored("\(errs) error\(errs == 1 ? "" : "s")", MLColor.rosso)
+            )
             errItem.isEnabled = false
             menu.addItem(errItem)
         }
@@ -793,7 +929,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ? "Schedule: Daily at \(scheduleIntervalMinutes / 60 - 24 + (scheduleIntervalMinutes % 60 == 0 ? 0 : 1)):00"
                 : "Schedule: Every \(scheduleIntervalMinutes) min")
             : "Schedule: Disabled"
-        let schedItem = NSMenuItem(title: "  \(schedLabel)", action: nil, keyEquivalent: "")
+        let schedItem = NSMenuItem(title: schedLabel, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
 
         for mins in [15, 30, 60, 120] {
@@ -840,7 +976,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Preferences Submenu
 
     private func addPreferencesSubmenu(to menu: NSMenu) {
-        let prefsItem = NSMenuItem(title: "  Preferences", action: nil, keyEquivalent: ",")
+        let prefsItem = NSMenuItem(title: "Preferences", action: nil, keyEquivalent: ",")
         prefsItem.keyEquivalentModifierMask = .command
         let prefsMenu = NSMenu()
 
@@ -879,8 +1015,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             sub.addItem(noDisks)
         } else {
             for vol in volumes {
-                let label = "\(vol.name) — \(vol.freeSpaceFormatted) \(vol.encryptionIcon)"
-                let item = NSMenuItem(title: label, action: #selector(selectBackupDisk(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: "", action: #selector(selectBackupDisk(_:)), keyEquivalent: "")
+                let encColor = vol.isEncrypted ? MLColor.verde : MLColor.rosso
+                let encLabel = vol.isEncrypted ? "Encrypted" : "Not encrypted"
+                item.attributedTitle = MLText.build(
+                    MLText.bold(vol.name),
+                    MLText.plain(" -- \(vol.freeSpaceFormatted) "),
+                    MLText.colored(encLabel, encColor)
+                )
                 item.target = self
                 item.representedObject = vol.path as NSString
                 if currentDest.hasPrefix(vol.path) {
@@ -1108,11 +1250,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func backupNow() {
         guard currentStatus?.state != "running" else { return }
-        Shell.runAsync("rustyback backup 2>&1") { _ in }
-        // Polling will pick up the running state from status.json
-        // Switch to fast polling immediately
+
+        // Clear old error log before starting
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+        let errorLogPath = "\(home)/.local/share/rusty-mac-backup/backup-error.log"
+        try? "".write(toFile: errorLogPath, atomically: true, encoding: .utf8)
+
+        // Immediately show backing-up state in menu
+        startAnimation()
+        buildMenu()
+
+        // Switch to fast polling
         schedulePollTimer(interval: 2)
-        pollStatus()
+
+        Shell.runAsync("rustyback backup 2>&1") { [weak self] result in
+            guard let self = self else { return }
+            self.pollStatus()
+
+            // Check for errors in the output
+            let lower = result.lowercased()
+            if lower.contains("error") || lower.contains("failed") || lower.contains("bail") {
+                // Log the error
+                try? result.write(toFile: errorLogPath, atomically: true, encoding: .utf8)
+
+                self.sendNotification(
+                    title: "Backup Failed",
+                    body: String(result.prefix(200))
+                )
+            }
+        }
     }
 
     @objc private func openBackupFolder() {

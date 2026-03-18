@@ -27,8 +27,14 @@ impl ExcludeFilter {
                 }
             }
             // Check if path starts with pattern (directory prefix match)
+            // Require match at a path boundary to avoid false positives
+            // (e.g. "Library/Developer" should NOT match "Library/DeveloperExtra")
             if path_str.starts_with(pattern.as_str()) {
-                return true;
+                if path_str.len() == pattern.len()
+                    || path_str.as_bytes().get(pattern.len()) == Some(&b'/')
+                {
+                    return true;
+                }
             }
         }
         false
