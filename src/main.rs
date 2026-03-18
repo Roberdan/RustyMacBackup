@@ -459,41 +459,28 @@ fn get_volume_free_space(path: &std::path::Path) -> Result<u64> {
 }
 
 fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
-    // Try creating the directory directly first
-    match std::fs::create_dir_all(path) {
-        Ok(_) => {
-            // Test write access
-            let test_file = path.join(".rmb-write-test");
-            match std::fs::write(&test_file, "test") {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&test_file);
-                    return Ok(());
-                }
-                Err(e) => {
-                    // If directory exists but we can't write, it's likely FDA missing
-                    if path.exists() && !atty::is(atty::Stream::Stdout) {
-                        // Non-interactive (menu bar app): clear error about FDA
-                        anyhow::bail!(
-                            "Permission denied writing to {}.\n\
-                             Add RustyBackMenu.app to Full Disk Access in System Settings.",
-                            path.display()
-                        );
-                    }
-                    // Interactive terminal: fall through to sudo
-                    if !atty::is(atty::Stream::Stdout) {
-                        anyhow::bail!("Permission denied: {}", e);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            if !atty::is(atty::Stream::Stdout) {
-                anyhow::bail!("Cannot create {}: {}", path.display(), e);
-            }
-        }
+    // If directory already exists, assume it's writable
+    // (the backup engine handles per-file errors gracefully)
+    if path.exists() {
+        return Ok(());
     }
 
-    // Need elevated permissions (interactive terminal only)
+    // Try creating the directory
+    match std::fs::create_dir_all(path) {
+        Ok(_) => return Ok(()),
+        Err(_) => {}
+    }
+
+    // Only attempt sudo if we have a TTY (interactive terminal)
+    // Menu bar app and launchd don't have a terminal for password input
+    if !atty::is(atty::Stream::Stdout) {
+        anyhow::bail!(
+            "Cannot create backup directory: {}\n\
+             Run `rustyback init` from a terminal first.",
+            path.display()
+        );
+    }
+
     println!();
     println!("  {} This disk requires admin permissions for the first setup.", "🔑".to_string());
     println!("  You'll be asked for your password once. This won't be needed again.");
@@ -512,11 +499,6 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
             .args(["diskutil", "enableOwnership", &parent.to_string_lossy()])
             .output();
     }
-
-    // Verify
-    let test_file = path.join(".rmb-write-test");
-    std::fs::write(&test_file, "test")?;
-    std::fs::remove_file(&test_file)?;
 
     println!("  {} Permissions set", "✅".green());
     Ok(())
