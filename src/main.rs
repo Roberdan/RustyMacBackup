@@ -561,7 +561,7 @@ fn cmd_stop() -> Result<()> {
     let config = config::Config::load(&config::Config::default_path()).ok();
     let lock_path = config
         .as_ref()
-        .map(|c| c.destination.path.join(".rmb.lock"))
+        .map(|c| c.destination.path.join("rustyback.lock"))
         .unwrap_or_default();
 
     if lock_path.exists() {

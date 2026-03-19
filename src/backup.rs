@@ -195,35 +195,37 @@ fn check_disk_space(path: &Path) -> Result<u64> {
     Ok(stat.f_bavail as u64 * stat.f_bsize as u64)
 }
 
-/// Handle stale .in-progress directories from failed/interrupted backups.
+/// Handle stale in-progress directories from failed/interrupted backups.
 /// If the dir has actual content, finalize it as a completed backup (rename).
-/// If empty, remove it.
+/// If empty, remove it. Also handles old-style .in-progress-* dirs.
 fn cleanup_stale_in_progress(dest_base: &Path) -> Result<()> {
     for entry in fs::read_dir(dest_base)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with(".in-progress-") && entry.file_type()?.is_dir() {
-            // Check if it has real content (not empty)
+        // Match both new "in-progress-*" and old ".in-progress-*" format
+        let is_in_progress = name.starts_with("in-progress-") || name.starts_with(".in-progress-");
+        if is_in_progress && entry.file_type()?.is_dir() {
             let has_content = fs::read_dir(entry.path())
                 .map(|mut d| d.next().is_some())
                 .unwrap_or(false);
 
             if has_content {
-                // Finalize as a completed backup — it's partial but better than nothing
-                let timestamp = name.trim_start_matches(".in-progress-");
+                let timestamp = name.trim_start_matches('.').trim_start_matches("in-progress-");
                 let final_name = dest_base.join(timestamp);
                 if !final_name.exists() {
                     println!("  {} recovering interrupted backup {}", "↻".yellow(), timestamp);
                     fs::rename(entry.path(), &final_name)?;
                 } else {
-                    // A completed backup with same timestamp already exists — remove stale
                     println!("  {} removing duplicate stale {}", "x".red(), name);
                     fs::remove_dir_all(entry.path())?;
                 }
             } else {
-                // Empty dir — just remove
                 let _ = fs::remove_dir(entry.path());
             }
+        }
+        // Also clean up old .rmb.lock files
+        if name == ".rmb.lock" {
+            let _ = fs::remove_file(entry.path());
         }
     }
     Ok(())
@@ -296,13 +298,13 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
 
     // Create new backup dir as .in-progress
     let timestamp = Local::now().format("%Y-%m-%d_%H%M%S").to_string();
-    let in_progress = dest_base.join(format!(".in-progress-{}", timestamp));
+    let in_progress = dest_base.join(format!("in-progress-{}", timestamp));
     let final_path = dest_base.join(&timestamp);
 
     fs::create_dir_all(&in_progress)?;
 
     // Write lock file (clean up stale locks from crashed backups)
-    let lock_path = dest_base.join(".rmb.lock");
+    let lock_path = dest_base.join("rustyback.lock");
     if lock_path.exists() {
         // Check if the PID in the lock file is still alive
         let lock_content = fs::read_to_string(&lock_path).unwrap_or_default();
@@ -789,7 +791,7 @@ mod tests {
         fs::write(source.path().join("f.txt"), "t").unwrap();
         // Use current PID so the lock looks active (not stale)
         let my_pid = std::process::id();
-        fs::write(dest.path().join(".rmb.lock"), format!("pid:{}\n", my_pid)).unwrap();
+        fs::write(dest.path().join("rustyback.lock"), format!("pid:{}\n", my_pid)).unwrap();
 
         let config = test_config(source.path(), dest.path());
         assert!(run_backup(&config).is_err());
@@ -802,7 +804,7 @@ mod tests {
 
         fs::write(source.path().join("f.txt"), "data").unwrap();
         // PID 99999999 doesn't exist — lock is stale
-        fs::write(dest.path().join(".rmb.lock"), "pid:99999999\n").unwrap();
+        fs::write(dest.path().join("rustyback.lock"), "pid:99999999\n").unwrap();
 
         let config = test_config(source.path(), dest.path());
         // Should succeed because stale lock is cleaned up
@@ -831,7 +833,7 @@ mod tests {
         let dest = TempDir::new().unwrap();
         fs::create_dir(dest.path().join("2026-03-18_100000")).unwrap();
         fs::create_dir(dest.path().join("2026-03-17_100000")).unwrap();
-        fs::create_dir(dest.path().join(".in-progress-abc")).unwrap();
+        fs::create_dir(dest.path().join("in-progress-abc")).unwrap();
 
         let backups = list_backups(dest.path()).unwrap();
         assert_eq!(backups.len(), 2);
@@ -845,12 +847,12 @@ mod tests {
         let dest = TempDir::new().unwrap();
 
         fs::write(source.path().join("f.txt"), "data").unwrap();
-        fs::create_dir(dest.path().join(".in-progress-old")).unwrap();
-        fs::write(dest.path().join(".in-progress-old/junk.txt"), "stale").unwrap();
+        fs::create_dir(dest.path().join("in-progress-old")).unwrap();
+        fs::write(dest.path().join("in-progress-old/junk.txt"), "stale").unwrap();
 
         let config = test_config(source.path(), dest.path());
         let _stats = run_backup(&config).unwrap();
 
-        assert!(!dest.path().join(".in-progress-old").exists());
+        assert!(!dest.path().join("in-progress-old").exists());
     }
 }
