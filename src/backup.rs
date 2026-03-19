@@ -195,14 +195,35 @@ fn check_disk_space(path: &Path) -> Result<u64> {
     Ok(stat.f_bavail as u64 * stat.f_bsize as u64)
 }
 
-/// Clean up stale .in-progress directories from failed backups
+/// Handle stale .in-progress directories from failed/interrupted backups.
+/// If the dir has actual content, finalize it as a completed backup (rename).
+/// If empty, remove it.
 fn cleanup_stale_in_progress(dest_base: &Path) -> Result<()> {
     for entry in fs::read_dir(dest_base)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with(".in-progress-") && entry.file_type()?.is_dir() {
-            println!("  {} removing stale {}", "x".red(), name);
-            fs::remove_dir_all(entry.path())?;
+            // Check if it has real content (not empty)
+            let has_content = fs::read_dir(entry.path())
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+
+            if has_content {
+                // Finalize as a completed backup — it's partial but better than nothing
+                let timestamp = name.trim_start_matches(".in-progress-");
+                let final_name = dest_base.join(timestamp);
+                if !final_name.exists() {
+                    println!("  {} recovering interrupted backup {}", "↻".yellow(), timestamp);
+                    fs::rename(entry.path(), &final_name)?;
+                } else {
+                    // A completed backup with same timestamp already exists — remove stale
+                    println!("  {} removing duplicate stale {}", "x".red(), name);
+                    fs::remove_dir_all(entry.path())?;
+                }
+            } else {
+                // Empty dir — just remove
+                let _ = fs::remove_dir(entry.path());
+            }
         }
     }
     Ok(())
