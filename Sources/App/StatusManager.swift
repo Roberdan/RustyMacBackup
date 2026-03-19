@@ -1,6 +1,7 @@
 import Foundation
 
 enum AppState {
+    case needsSetup // No config — first launch
     case idle
     case running
     case error
@@ -16,6 +17,12 @@ class StatusManager {
 
     /// Poll status.json and determine current app state.
     func poll(config: Config?) -> AppState {
+        // No config = first-time setup needed
+        guard let config = config else {
+            currentState = .needsSetup
+            return currentState
+        }
+
         lastStatus = statusWriter.read()
 
         let fda = FDACheck.checkFullDiskAccess()
@@ -24,11 +31,9 @@ class StatusManager {
             return currentState
         }
 
-        if let config = config {
-            if !FileManager.default.fileExists(atPath: config.destination.path) {
-                currentState = .diskAbsent
-                return currentState
-            }
+        if !FileManager.default.fileExists(atPath: config.destination.path) {
+            currentState = .diskAbsent
+            return currentState
         }
 
         if let status = lastStatus {
@@ -40,7 +45,6 @@ class StatusManager {
                 currentState = .error
                 return currentState
             }
-            // Stale: >24h since last completed backup
             if !status.lastCompleted.isEmpty,
                let lastDate = ISO8601DateFormatter().date(from: status.lastCompleted),
                Date().timeIntervalSince(lastDate) > 86400 {

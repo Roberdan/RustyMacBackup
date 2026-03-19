@@ -10,6 +10,8 @@ class MenuBuilder {
     func buildMenu(state: AppState, status: BackupStatusFile?, config: Config?, availableUpdate: String?) -> NSMenu {
         let menu = NSMenu()
         switch state {
+        case .needsSetup:
+            buildSetupMenu(menu: menu)
         case .idle, .stale:
             buildIdleMenu(menu: menu, status: status, config: config, state: state, availableUpdate: availableUpdate)
         case .running:
@@ -22,6 +24,82 @@ class MenuBuilder {
             buildFDAMissingMenu(menu: menu)
         }
         return menu
+    }
+
+    // MARK: - First-Run Setup Menu
+
+    private func buildSetupMenu(menu: NSMenu) {
+        menu.addItem(makeHeader("RustyMacBackup", dotColor: MLColor.gold))
+        menu.addItem(.separator())
+
+        let welcome = NSMenuItem()
+        welcome.attributedTitle = MLText.bold("👋 Benvenuto! Configura il backup")
+        menu.addItem(welcome)
+        menu.addItem(smallItem("  Seleziona il disco dove salvare i backup:"))
+        menu.addItem(.separator())
+
+        // Discover available volumes
+        let volumes = discoverVolumes()
+        if volumes.isEmpty {
+            menu.addItem(coloredBullet("Nessun disco esterno collegato", color: MLColor.rosso))
+            menu.addItem(smallItem("  Collega un disco esterno e riprova"))
+        } else {
+            for volume in volumes {
+                let (free, total) = DiskDiagnostics.diskSpace(at: volume.path)
+                let freeGB = free / 1_073_741_824
+                let totalGB = total / 1_073_741_824
+                let spaceLevel = DiskDiagnostics.spaceColorLevel(free: free)
+                let spaceColor = spaceLevel == .verde ? MLColor.verde : spaceLevel == .warning ? MLColor.warning : MLColor.rosso
+
+                // "Select and configure" item
+                let item = NSMenuItem()
+                let text = NSMutableAttributedString()
+                text.append(MLText.dot(color: spaceColor))
+                text.append(MLText.bold("\(volume.lastPathComponent)"))
+                text.append(MLText.plain("  \(freeGB) GB liberi / \(totalGB) GB"))
+                item.attributedTitle = text
+                item.representedObject = volume
+                item.action = #selector(AppDelegate.selectBackupDisk(_:))
+                item.target = delegate
+                menu.addItem(item)
+
+                // Sub-option: configure AND start first backup
+                let quickItem = NSMenuItem()
+                quickItem.attributedTitle = MLText.colored("    ▸ Configura e avvia primo backup", color: MLColor.verde)
+                quickItem.representedObject = volume
+                quickItem.action = #selector(AppDelegate.setupAndBackup(_:))
+                quickItem.target = delegate
+                menu.addItem(quickItem)
+            }
+        }
+
+        menu.addItem(.separator())
+
+        // FDA check info
+        let fda = FDACheck.checkFullDiskAccess()
+        if fda.hasAccess {
+            menu.addItem(coloredBullet("Full Disk Access: OK", color: MLColor.verde))
+        } else {
+            menu.addItem(coloredBullet("Full Disk Access: mancante", color: MLColor.warning))
+            let fdaItem = plainAction("  Apri Impostazioni Privacy...", action: #selector(AppDelegate.openFDASettings), key: "")
+            menu.addItem(fdaItem)
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    // Discover external volumes (skip system disk)
+    private func discoverVolumes() -> [URL] {
+        let fm = FileManager.default
+        guard let volumes = fm.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey],
+                                                  options: [.skipHiddenVolumes]) else { return [] }
+        return volumes.filter { url in
+            let path = url.path
+            if path == "/" || path == "/System/Volumes/Data" { return false }
+            if url.lastPathComponent == "Macintosh HD" { return false }
+            return path.hasPrefix("/Volumes/")
+        }
     }
 
     // MARK: - Idle / Stale

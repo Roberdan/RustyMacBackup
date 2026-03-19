@@ -24,6 +24,7 @@ class IconManager {
         currentState = state
         stopAnimations()
         switch state {
+        case .needsSetup:  setDotColor(MLColor.gold)
         case .idle:        setDotColor(MLColor.verde)
         case .running:     startRunningAnimation()
         case .error:       pulseError()

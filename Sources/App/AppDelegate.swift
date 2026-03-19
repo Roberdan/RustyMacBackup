@@ -199,8 +199,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         FDACheck.openFDASettings()
     }
 
+    // MARK: - First-Run Setup (from menu bar — no terminal needed)
+
+    @objc func selectBackupDisk(_ sender: NSMenuItem) {
+        guard let volumeURL = sender.representedObject as? URL else { return }
+        let backupDir = volumeURL.appendingPathComponent("RustyMacBackup")
+
+        // Create backup directory
+        do {
+            try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        } catch {
+            sendNotification(title: "❌ Errore", body: "Impossibile creare la cartella di backup: \(error.localizedDescription)")
+            return
+        }
+
+        // Generate and save config
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let configContent = generateDefaultConfig(homePath: home, backupPath: backupDir.path)
+        let configURL = Config.defaultPath
+        do {
+            try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            try configContent.write(to: configURL, atomically: true, encoding: .utf8)
+            config = try Config.load(from: configURL)
+        } catch {
+            sendNotification(title: "❌ Errore", body: "Impossibile salvare la configurazione: \(error.localizedDescription)")
+            return
+        }
+
+        iconManager.flashCompletion()
+        sendNotification(title: "✅ Configurazione completata",
+                        body: "Backup su \(volumeURL.lastPathComponent). Pronto per il primo backup!")
+        pollStatus()
+        rebuildMenu()
+    }
+
+    @objc func setupAndBackup(_ sender: NSMenuItem) {
+        selectBackupDisk(sender)
+        // Give a moment for config to settle, then backup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.backupNow()
+        }
+    }
+
     private func iconColorForState(_ state: AppState) -> NSColor {
         switch state {
+        case .needsSetup: return MLColor.gold
         case .idle:       return MLColor.verde
         case .running:    return MLColor.info
         case .error:      return MLColor.rosso
