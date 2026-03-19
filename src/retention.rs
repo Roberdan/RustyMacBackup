@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{NaiveDateTime, Utc, Duration};
+use chrono::{Duration, NaiveDateTime, Utc};
 use colored::Colorize;
 use std::fs;
 use std::path::Path;
@@ -23,7 +23,10 @@ pub fn prune_backups(dest_base: &Path, policy: &RetentionPolicy) -> Result<Vec<S
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         if let Some(ts) = parse_backup_name(&name) {
-            entries.push(BackupEntry { name, timestamp: ts });
+            entries.push(BackupEntry {
+                name,
+                timestamp: ts,
+            });
         }
     }
 
@@ -125,20 +128,35 @@ pub fn print_retention_summary(dest_base: &Path, policy: &RetentionPolicy) -> Re
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         if let Some(ts) = parse_backup_name(&name) {
-            entries.push(BackupEntry { name, timestamp: ts });
+            entries.push(BackupEntry {
+                name,
+                timestamp: ts,
+            });
         }
     }
 
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     println!("{}", "Retention policy:".bold());
-    println!("  Hourly:  keep {} (last {} hours)", policy.hourly, policy.hourly);
-    println!("  Daily:   keep {} (last {} days)", policy.daily, policy.daily);
-    println!("  Weekly:  keep {} (last {} weeks)", policy.weekly, policy.weekly);
+    println!(
+        "  Hourly:  keep {} (last {} hours)",
+        policy.hourly, policy.hourly
+    );
+    println!(
+        "  Daily:   keep {} (last {} days)",
+        policy.daily, policy.daily
+    );
+    println!(
+        "  Weekly:  keep {} (last {} weeks)",
+        policy.weekly, policy.weekly
+    );
     if policy.monthly == 0 {
         println!("  Monthly: keep forever");
     } else {
-        println!("  Monthly: keep {} (last {} months)", policy.monthly, policy.monthly);
+        println!(
+            "  Monthly: keep {} (last {} months)",
+            policy.monthly, policy.monthly
+        );
     }
     println!();
     println!("  Total backups: {}", entries.len());

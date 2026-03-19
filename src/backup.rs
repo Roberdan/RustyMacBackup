@@ -9,8 +9,8 @@ use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use walkdir::WalkDir;
 
@@ -77,14 +77,12 @@ pub struct BackupStatusFile {
 
 pub fn status_file_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
-        .join(".local/share/rusty-mac-backup/status.json")
+    PathBuf::from(home).join(".local/share/rusty-mac-backup/status.json")
 }
 
 pub fn errors_file_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
-        .join(".local/share/rusty-mac-backup/errors.json")
+    PathBuf::from(home).join(".local/share/rusty-mac-backup/errors.json")
 }
 
 fn write_errors(errors: &[String]) {
@@ -167,7 +165,11 @@ pub fn write_error_status() {
 
 /// Set I/O priority: THROTTLE on battery, DEFAULT (full speed) when plugged in
 fn set_io_priority() {
-    let policy = if is_on_battery() { IOPOL_THROTTLE } else { IOPOL_DEFAULT };
+    let policy = if is_on_battery() {
+        IOPOL_THROTTLE
+    } else {
+        IOPOL_DEFAULT
+    };
     unsafe {
         setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, policy);
     }
@@ -210,10 +212,16 @@ fn cleanup_stale_in_progress(dest_base: &Path) -> Result<()> {
                 .unwrap_or(false);
 
             if has_content {
-                let timestamp = name.trim_start_matches('.').trim_start_matches("in-progress-");
+                let timestamp = name
+                    .trim_start_matches('.')
+                    .trim_start_matches("in-progress-");
                 let final_name = dest_base.join(timestamp);
                 if !final_name.exists() {
-                    println!("  {} recovering interrupted backup {}", "↻".yellow(), timestamp);
+                    println!(
+                        "  {} recovering interrupted backup {}",
+                        "↻".yellow(),
+                        timestamp
+                    );
                     fs::rename(entry.path(), &final_name)?;
                 } else {
                     println!("  {} removing duplicate stale {}", "x".red(), name);
@@ -320,7 +328,12 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     // Check disk space before starting
     let free_space = check_disk_space(dest_base)?;
     if free_space < MIN_FREE_SPACE {
-        println!("{}", "\u{26a0} Low disk space! Running auto-prune...".yellow().bold());
+        println!(
+            "{}",
+            "\u{26a0} Low disk space! Running auto-prune..."
+                .yellow()
+                .bold()
+        );
         let policy = crate::retention::RetentionPolicy {
             hourly: config.retention.hourly,
             daily: config.retention.daily,
@@ -357,7 +370,8 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     if lock_path.exists() {
         // Check if the PID in the lock file is still alive
         let lock_content = fs::read_to_string(&lock_path).unwrap_or_default();
-        let stale = if let Some(pid_str) = lock_content.lines()
+        let stale = if let Some(pid_str) = lock_content
+            .lines()
             .find(|l| l.starts_with("pid:"))
             .and_then(|l| l.strip_prefix("pid:"))
         {
@@ -373,13 +387,22 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
         };
 
         if stale {
-            println!("  {} removing stale lock (process no longer running)", "x".red());
+            println!(
+                "  {} removing stale lock (process no longer running)",
+                "x".red()
+            );
             let _ = fs::remove_file(&lock_path);
         } else {
-            anyhow::bail!("Another backup is in progress (lock file exists: {})", lock_path.display());
+            anyhow::bail!(
+                "Another backup is in progress (lock file exists: {})",
+                lock_path.display()
+            );
         }
     }
-    fs::write(&lock_path, format!("pid:{}\nstarted:{}\n", std::process::id(), timestamp))?;
+    fs::write(
+        &lock_path,
+        format!("pid:{}\nstarted:{}\n", std::process::id(), timestamp),
+    )?;
 
     let start_time = Instant::now();
     let started_at = Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
@@ -449,7 +472,9 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
             if scan_count % 5_000 == 0 {
                 scan_pb.set_message(format!(
                     "{} entries ({} files, {} dirs)",
-                    scan_count, file_entries.len(), dir_entries.len()
+                    scan_count,
+                    file_entries.len(),
+                    dir_entries.len()
                 ));
             }
         }
@@ -527,7 +552,12 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
             return;
         }
 
-        match process_file(&entry.source_path, &entry.dest_path, &entry.link_relative, &latest) {
+        match process_file(
+            &entry.source_path,
+            &entry.dest_path,
+            &entry.link_relative,
+            &latest,
+        ) {
             Ok(FileAction::HardLinked) => {
                 a_hardlinked.fetch_add(1, Ordering::Relaxed);
             }
@@ -557,7 +587,11 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
         if done % STATUS_UPDATE_INTERVAL == 0 {
             let elapsed = start_time.elapsed().as_secs_f64();
             let bytes_now = a_bytes.load(Ordering::Relaxed);
-            let bps = if elapsed > 0.0 { (bytes_now as f64 / elapsed) as u64 } else { 0 };
+            let bps = if elapsed > 0.0 {
+                (bytes_now as f64 / elapsed) as u64
+            } else {
+                0
+            };
             let eta = if done > 0 && elapsed > 0.0 {
                 let fps = done as f64 / elapsed;
                 (file_count.saturating_sub(done) as f64 / fps) as u64
@@ -606,8 +640,7 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     ));
 
     // Rename .in-progress to final
-    fs::rename(&in_progress, &final_path)
-        .context("Failed to finalize backup")?;
+    fs::rename(&in_progress, &final_path).context("Failed to finalize backup")?;
 
     // Remove lock
     let _ = fs::remove_file(&lock_path);
@@ -769,13 +802,22 @@ mod tests {
 
     fn test_config(source: &Path, dest: &Path) -> Config {
         Config {
-            source: crate::config::SourceConfig { 
+            source: crate::config::SourceConfig {
                 path: source.to_path_buf(),
                 extra_paths: vec![],
             },
-            destination: crate::config::DestinationConfig { path: dest.to_path_buf() },
-            exclude: crate::config::ExcludeConfig { patterns: vec!["*.tmp".to_string(), "node_modules".to_string()] },
-            retention: crate::config::RetentionConfig { hourly: 24, daily: 30, weekly: 52, monthly: 0 },
+            destination: crate::config::DestinationConfig {
+                path: dest.to_path_buf(),
+            },
+            exclude: crate::config::ExcludeConfig {
+                patterns: vec!["*.tmp".to_string(), "node_modules".to_string()],
+            },
+            retention: crate::config::RetentionConfig {
+                hourly: 24,
+                daily: 30,
+                weekly: 52,
+                monthly: 0,
+            },
         }
     }
 
@@ -813,7 +855,7 @@ mod tests {
         let stats2 = run_backup(&config).unwrap();
 
         assert_eq!(stats2.files_hardlinked, 1); // stable.txt
-        assert_eq!(stats2.files_copied, 1);     // changing.txt
+        assert_eq!(stats2.files_copied, 1); // changing.txt
     }
 
     #[test]
@@ -840,7 +882,11 @@ mod tests {
         fs::write(source.path().join("f.txt"), "t").unwrap();
         // Use current PID so the lock looks active (not stale)
         let my_pid = std::process::id();
-        fs::write(dest.path().join("rustyback.lock"), format!("pid:{}\n", my_pid)).unwrap();
+        fs::write(
+            dest.path().join("rustyback.lock"),
+            format!("pid:{}\n", my_pid),
+        )
+        .unwrap();
 
         let config = test_config(source.path(), dest.path());
         assert!(run_backup(&config).is_err());

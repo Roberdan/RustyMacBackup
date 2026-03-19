@@ -70,9 +70,15 @@ impl Default for RetentionConfig {
     }
 }
 
-fn default_hourly() -> u32 { 24 }
-fn default_daily() -> u32 { 30 }
-fn default_weekly() -> u32 { 52 }
+fn default_hourly() -> u32 {
+    24
+}
+fn default_daily() -> u32 {
+    30
+}
+fn default_weekly() -> u32 {
+    52
+}
 
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -83,6 +89,9 @@ impl Config {
 
     pub fn default_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        PathBuf::from(home).join(".config").join("rusty-mac-backup").join("config.toml")
+        PathBuf::from(home)
+            .join(".config")
+            .join("rusty-mac-backup")
+            .join("config.toml")
     }
 }

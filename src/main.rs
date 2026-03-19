@@ -10,7 +10,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(name = "rustyback", version, about = "RustyMacBackup — Fast incremental backups with hard links",
+#[command(
+    name = "rustyback",
+    version,
+    about = "RustyMacBackup — Fast incremental backups with hard links",
     after_help = "\x1b[1mQuick Reference:\x1b[0m
   rustyback init                  First-time setup wizard
   rustyback backup                Run backup now
@@ -23,7 +26,8 @@ use std::time::Instant;
   rustyback schedule on           Enable hourly automatic backup
   rustyback schedule off          Disable automatic backup
   rustyback prune                 Clean up old backups
-")]
+"
+)]
 struct Cli {
     /// Path to config file
     #[arg(short, long)]
@@ -84,21 +88,13 @@ enum ConfigAction {
     /// Show current configuration
     Show,
     /// Set source directory
-    Source {
-        path: PathBuf,
-    },
+    Source { path: PathBuf },
     /// Set destination directory
-    Dest {
-        path: PathBuf,
-    },
+    Dest { path: PathBuf },
     /// Add an exclude pattern
-    Exclude {
-        pattern: String,
-    },
+    Exclude { pattern: String },
     /// Remove an exclude pattern
-    Include {
-        pattern: String,
-    },
+    Include { pattern: String },
     /// List all exclude patterns
     Excludes,
     /// Set retention policy
@@ -129,9 +125,7 @@ enum ScheduleAction {
     /// Show schedule status
     Status,
     /// Set backup interval in minutes
-    Interval {
-        minutes: u32,
-    },
+    Interval { minutes: u32 },
     /// Schedule daily backup at a specific hour (e.g. 2 for 2:00 AM)
     Daily {
         /// Hour of day (0-23)
@@ -172,9 +166,15 @@ fn main() -> Result<()> {
 fn cmd_init() -> Result<()> {
     let config_path = config::Config::default_path();
     if config_path.exists() {
-        println!("{} Config already exists: {}", "⚠".yellow(), config_path.display());
+        println!(
+            "{} Config already exists: {}",
+            "⚠".yellow(),
+            config_path.display()
+        );
         println!("   Run `rustyback config edit` to modify it.");
-        println!("   Run `rustyback init` again to reconfigure, or `rustyback config edit` to edit manually.");
+        println!(
+            "   Run `rustyback init` again to reconfigure, or `rustyback config edit` to edit manually."
+        );
         return Ok(());
     }
 
@@ -190,26 +190,42 @@ fn cmd_init() -> Result<()> {
     // =========================================================================
     // Step 1: Check Full Disk Access
     // =========================================================================
-    println!("{} Checking Full Disk Access...", step_label(1, total_steps));
-    
+    println!(
+        "{} Checking Full Disk Access...",
+        step_label(1, total_steps)
+    );
+
     // Try reading a TCC-protected path to verify FDA
-    let fda_ok = std::fs::read_dir(format!("{}/Library/Mail", home)).is_ok() 
+    let fda_ok = std::fs::read_dir(format!("{}/Library/Mail", home)).is_ok()
         || std::fs::read_dir(format!("{}/Library/Messages", home)).is_ok()
         || std::fs::metadata(format!("{}/Library/Safari", home)).is_ok();
 
     if !fda_ok {
         println!();
-        println!("  {} {} needs Full Disk Access to back up your data.", "⚠".yellow().bold(), terminal_name.bold());
+        println!(
+            "  {} {} needs Full Disk Access to back up your data.",
+            "⚠".yellow().bold(),
+            terminal_name.bold()
+        );
         println!();
         println!("  How to enable:");
-        println!("  1. Open {} → {} → {} → {}",
+        println!(
+            "  1. Open {} → {} → {} → {}",
             "System Settings".bold(),
             "Privacy & Security".bold(),
             "Full Disk Access".bold(),
             terminal_name.bold()
         );
-        println!("  2. Toggle {} {}", terminal_name.bold(), "ON".green().bold());
-        println!("  3. Restart {} and run {} again", terminal_name.bold(), "rustyback init".cyan());
+        println!(
+            "  2. Toggle {} {}",
+            terminal_name.bold(),
+            "ON".green().bold()
+        );
+        println!(
+            "  3. Restart {} and run {} again",
+            terminal_name.bold(),
+            "rustyback init".cyan()
+        );
         println!();
         anyhow::bail!("Full Disk Access required. See instructions above.");
     }
@@ -218,28 +234,35 @@ fn cmd_init() -> Result<()> {
     // =========================================================================
     // Step 2: Discover disks
     // =========================================================================
-    println!("{} Scanning for backup disks...", step_label(2, total_steps));
+    println!(
+        "{} Scanning for backup disks...",
+        step_label(2, total_steps)
+    );
     let volumes = discover_volumes()?;
 
     if volumes.is_empty() {
         println!();
         println!("  {} No external disks found!", "❌".red());
         println!();
-        println!("  Connect an external drive and run {} again.", "rustyback init".cyan());
+        println!(
+            "  Connect an external drive and run {} again.",
+            "rustyback init".cyan()
+        );
         anyhow::bail!("No backup disk available.");
     }
 
     // Show volume menu
     println!();
     for (i, (name, _path, size, encrypted)) in volumes.iter().enumerate() {
-        let lock = if *encrypted { 
+        let lock = if *encrypted {
             format!("{}", "🔒 encrypted".green())
-        } else { 
+        } else {
             format!("{}", "⚠ NOT encrypted".red().bold())
         };
-        println!("  {}. {} — {} free — {}", 
-            (i + 1).to_string().cyan().bold(), 
-            name.bold(), 
+        println!(
+            "  {}. {} — {} free — {}",
+            (i + 1).to_string().cyan().bold(),
+            name.bold(),
             format_bytes(*size),
             lock,
         );
@@ -267,11 +290,18 @@ fn cmd_init() -> Result<()> {
     // =========================================================================
     // Step 3: Check encryption
     // =========================================================================
-    println!("{} Verifying disk encryption...", step_label(3, total_steps));
+    println!(
+        "{} Verifying disk encryption...",
+        step_label(3, total_steps)
+    );
 
     if !encrypted {
         println!();
-        println!("  {} {} is NOT encrypted!", "🔒".to_string(), vol_name.bold().red());
+        println!(
+            "  {} {} is NOT encrypted!",
+            "🔒".to_string(),
+            vol_name.bold().red()
+        );
         println!();
         println!("  RustyMacBackup requires encryption to protect your data.");
         println!();
@@ -305,7 +335,11 @@ fn cmd_init() -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&config_path, &config_content)?;
-    println!("  {} {}", "✅".green(), config_path.display().to_string().dimmed());
+    println!(
+        "  {} {}",
+        "✅".green(),
+        config_path.display().to_string().dimmed()
+    );
 
     // =========================================================================
     // Step 6: Summary and next steps
@@ -318,17 +352,41 @@ fn cmd_init() -> Result<()> {
     println!("{}", "━".repeat(50).dimmed());
     println!();
     println!("  {} {}", "Source:".bold(), home);
-    println!("  {} /Applications, /opt/homebrew, /etc, /Library", "System:".bold());
-    println!("  {} {}", "Dest:".bold(), backup_dir.display().to_string().green());
+    println!(
+        "  {} /Applications, /opt/homebrew, /etc, /Library",
+        "System:".bold()
+    );
+    println!(
+        "  {} {}",
+        "Dest:".bold(),
+        backup_dir.display().to_string().green()
+    );
     println!("  {} config.toml", "Config:".bold());
     println!();
     println!("{}", "What's next:".bold());
-    println!("  {} {} {}", "1.".cyan(), "rustyback backup".bold(), "— run your first backup now");
-    println!("  {} {} {}", "2.".cyan(), "rustyback schedule on".bold(), "— enable automatic hourly backups");
-    println!("  {} {} {}", "3.".cyan(), "rustyback config excludes".bold(), "— review what's excluded");
+    println!(
+        "  {} {} {}",
+        "1.".cyan(),
+        "rustyback backup".bold(),
+        "— run your first backup now"
+    );
+    println!(
+        "  {} {} {}",
+        "2.".cyan(),
+        "rustyback schedule on".bold(),
+        "— enable automatic hourly backups"
+    );
+    println!(
+        "  {} {} {}",
+        "3.".cyan(),
+        "rustyback config excludes".bold(),
+        "— review what's excluded"
+    );
     println!();
-    println!("  For automatic backups, also add {} to Full Disk Access:",
-        "rustyback".bold());
+    println!(
+        "  For automatic backups, also add {} to Full Disk Access:",
+        "rustyback".bold()
+    );
     println!("  {}", format!("{}/.local/bin/rustyback", home).dimmed());
     println!();
 
@@ -349,12 +407,18 @@ fn cmd_init() -> Result<()> {
         println!();
         println!("{}", "━".repeat(50).dimmed());
         println!("{}", "First backup complete!".bold().green());
-        println!("  {} files hard-linked", stats.files_hardlinked.to_string().cyan());
+        println!(
+            "  {} files hard-linked",
+            stats.files_hardlinked.to_string().cyan()
+        );
         println!("  {} files copied", stats.files_copied.to_string().yellow());
         println!("  {} total", format_bytes(stats.bytes_copied));
         println!("  ⏱  {:.1}s", elapsed.as_secs_f64());
         if !stats.errors.is_empty() {
-            println!("  {} errors (permission denied on protected files — normal)", stats.errors.len());
+            println!(
+                "  {} errors (permission denied on protected files — normal)",
+                stats.errors.len()
+            );
         }
     }
 
@@ -459,7 +523,10 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
     }
 
     println!();
-    println!("  {} This disk requires admin permissions for the first setup.", "🔑".to_string());
+    println!(
+        "  {} This disk requires admin permissions for the first setup.",
+        "🔑".to_string()
+    );
     println!("  You'll be asked for your password once. This won't be needed again.");
     println!();
 
@@ -482,7 +549,8 @@ fn ensure_writable_dir(path: &std::path::Path) -> Result<()> {
 }
 
 fn generate_default_config(home: &str, backup_dir: &std::path::Path) -> String {
-    format!(r#"[source]
+    format!(
+        r#"[source]
 path = "{home}"
 # System paths to include in backup (apps, homebrew, system config)
 extra_paths = [
@@ -550,7 +618,10 @@ hourly = 24
 daily = 30
 weekly = 52
 monthly = 0
-"#, home = home, dest = backup_dir.display())
+"#,
+        home = home,
+        dest = backup_dir.display()
+    )
 }
 
 fn cmd_stop() -> Result<()> {
@@ -566,7 +637,8 @@ fn cmd_stop() -> Result<()> {
 
     if lock_path.exists() {
         let content = std::fs::read_to_string(&lock_path).unwrap_or_default();
-        if let Some(pid_str) = content.lines()
+        if let Some(pid_str) = content
+            .lines()
             .find(|l| l.starts_with("pid:"))
             .and_then(|l| l.strip_prefix("pid:"))
         {
@@ -574,12 +646,16 @@ fn cmd_stop() -> Result<()> {
                 // Check if it's alive
                 if unsafe { libc::kill(pid, 0) } == 0 {
                     println!("Stopping backup (PID {})...", pid);
-                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     // Verify process exited, SIGKILL if still alive
                     if unsafe { libc::kill(pid, 0) } == 0 {
                         println!("Process still alive, sending SIGKILL...");
-                        unsafe { libc::kill(pid, libc::SIGKILL); }
+                        unsafe {
+                            libc::kill(pid, libc::SIGKILL);
+                        }
                         std::thread::sleep(std::time::Duration::from_secs(1));
                     }
                     let _ = std::fs::remove_file(&lock_path);
@@ -613,7 +689,10 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
         return Ok(());
     }
     if is_on_battery() {
-        println!("{}", "🔋 Note: running on battery. Backup will use low priority I/O.".yellow());
+        println!(
+            "{}",
+            "🔋 Note: running on battery. Backup will use low priority I/O.".yellow()
+        );
     }
 
     // Check if destination disk is connected (exists AND actually mounted)
@@ -621,11 +700,14 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     let dest_mounted = backup::is_volume_mounted(&config.destination.path);
     if (!dest_exists || !dest_mounted) && !config.destination.path.starts_with("/tmp") {
         // Extract volume name for a friendly message
-        let vol_name = config.destination.path.components()
+        let vol_name = config
+            .destination
+            .path
+            .components()
             .nth(2)
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .unwrap_or_else(|| config.destination.path.display().to_string());
-        
+
         if atty::is(atty::Stream::Stdout) {
             anyhow::bail!(
                 "💾 Backup disk \"{}\" is not connected.\n   \
@@ -660,7 +742,12 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("disconnected during backup") {
-                eprintln!("{}", "💾 Backup disk was disconnected during backup!".red().bold());
+                eprintln!(
+                    "{}",
+                    "💾 Backup disk was disconnected during backup!"
+                        .red()
+                        .bold()
+                );
                 eprintln!("   The in-progress backup has been abandoned.");
                 eprintln!("   Reconnect the disk and run the backup again.");
                 return Ok(());
@@ -674,8 +761,14 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     println!();
     println!("{}", "━".repeat(50).dimmed());
     println!("{}", "Backup complete!".bold().green());
-    println!("  {} files hard-linked (unchanged)", stats.files_hardlinked.to_string().cyan());
-    println!("  {} files copied (new/modified)", stats.files_copied.to_string().yellow());
+    println!(
+        "  {} files hard-linked (unchanged)",
+        stats.files_hardlinked.to_string().cyan()
+    );
+    println!(
+        "  {} files copied (new/modified)",
+        stats.files_copied.to_string().yellow()
+    );
     println!("  {} dirs created", stats.dirs_created);
     println!("  {} copied", format_bytes(stats.bytes_copied));
     println!("  ⏱  {:.1}s", elapsed.as_secs_f64());
@@ -727,7 +820,10 @@ fn cmd_status(config_path: &Option<PathBuf>) -> Result<()> {
                 "running" => {
                     println!("  State:    {}", "RUNNING".yellow().bold());
                     println!("  Started:  {}", status.started_at);
-                    println!("  Progress: {}/{} files", status.files_done, status.files_total);
+                    println!(
+                        "  Progress: {}/{} files",
+                        status.files_done, status.files_total
+                    );
                     println!("  Speed:    {}/s", format_bytes(status.bytes_per_sec));
                     println!("  ETA:      {}s", status.eta_secs);
                     if !status.current_file.is_empty() {
@@ -762,15 +858,24 @@ fn cmd_status(config_path: &Option<PathBuf>) -> Result<()> {
     // Check if destination disk is connected
     let disk_connected = dest.exists();
     if !disk_connected {
-        let vol_name = dest.components()
+        let vol_name = dest
+            .components()
             .nth(2)
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .unwrap_or_else(|| dest.display().to_string());
-        println!("  Disk:     {} {}", "💾".to_string(), format!("\"{}\" not connected", vol_name).yellow());
+        println!(
+            "  Disk:     {} {}",
+            "💾".to_string(),
+            format!("\"{}\" not connected", vol_name).yellow()
+        );
         println!();
     }
 
-    let backups = if disk_connected { backup::list_backups(dest)? } else { vec![] };
+    let backups = if disk_connected {
+        backup::list_backups(dest)?
+    } else {
+        vec![]
+    };
     println!("  Backups: {}", backups.len());
 
     if let Some((latest, _)) = backups.last() {
@@ -924,7 +1029,10 @@ fn format_bytes(bytes: u64) -> String {
 fn dir_size(path: &std::path::Path) -> Result<u64> {
     let mut total: u64 = 0;
     if path.exists() {
-        for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+        for entry in walkdir::WalkDir::new(path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if entry.file_type().is_file() {
                 total += entry.metadata().map(|m| m.len()).unwrap_or(0);
             }
@@ -938,13 +1046,18 @@ fn dir_size(path: &std::path::Path) -> Result<u64> {
 // =============================================================================
 
 fn config_path_for(cli_config: &Option<PathBuf>) -> PathBuf {
-    cli_config.clone().unwrap_or_else(config::Config::default_path)
+    cli_config
+        .clone()
+        .unwrap_or_else(config::Config::default_path)
 }
 
 fn save_config(path: &std::path::Path, config: &config::Config) -> Result<()> {
     let mut out = String::new();
 
-    out.push_str(&format!("[source]\npath = {:?}\n", config.source.path.to_string_lossy()));
+    out.push_str(&format!(
+        "[source]\npath = {:?}\n",
+        config.source.path.to_string_lossy()
+    ));
     if !config.source.extra_paths.is_empty() {
         out.push_str("extra_paths = [\n");
         for p in &config.source.extra_paths {
@@ -954,7 +1067,10 @@ fn save_config(path: &std::path::Path, config: &config::Config) -> Result<()> {
     }
     out.push('\n');
 
-    out.push_str(&format!("[destination]\npath = {:?}\n\n", config.destination.path.to_string_lossy()));
+    out.push_str(&format!(
+        "[destination]\npath = {:?}\n\n",
+        config.destination.path.to_string_lossy()
+    ));
 
     out.push_str("[exclude]\npatterns = [\n");
     for p in &config.exclude.patterns {
@@ -988,7 +1104,10 @@ fn cmd_errors(show_all: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("{} file non copiati nell'ultimo backup\n", total.to_string().yellow());
+    println!(
+        "{} file non copiati nell'ultimo backup\n",
+        total.to_string().yellow()
+    );
 
     let categories = &json["categories"];
     for (key, label) in &[
@@ -999,7 +1118,9 @@ fn cmd_errors(show_all: bool) -> Result<()> {
     ] {
         if let Some(cat) = categories.get(key) {
             let count = cat["count"].as_u64().unwrap_or(0);
-            if count == 0 { continue; }
+            if count == 0 {
+                continue;
+            }
             println!("  {} {} — {}", "●".yellow(), label, count);
             if show_all {
                 if let Some(files) = cat["files"].as_array() {
@@ -1017,8 +1138,14 @@ fn cmd_errors(show_all: bool) -> Result<()> {
         println!("\n{}", "Usa --all per vedere i file specifici".dimmed());
     }
 
-    println!("\n{}", "Nota: la maggior parte sono file di sistema protetti da SIP.".dimmed());
-    println!("{}", "Questo è normale su macOS e non indica un problema.".dimmed());
+    println!(
+        "\n{}",
+        "Nota: la maggior parte sono file di sistema protetti da SIP.".dimmed()
+    );
+    println!(
+        "{}",
+        "Questo è normale su macOS e non indica un problema.".dimmed()
+    );
 
     Ok(())
 }
@@ -1029,20 +1156,32 @@ fn cmd_config(cli_config: &Option<PathBuf>, action: ConfigAction) -> Result<()> 
     match action {
         ConfigAction::Show => {
             let content = std::fs::read_to_string(&path)?;
-            println!("{} {}\n", "📄".to_string(), path.display().to_string().dimmed());
+            println!(
+                "{} {}\n",
+                "📄".to_string(),
+                path.display().to_string().dimmed()
+            );
             println!("{}", content);
         }
         ConfigAction::Source { path: new_source } => {
             let mut config = load_config(cli_config)?;
             let abs = std::fs::canonicalize(&new_source)?;
-            println!("  Source: {} → {}", config.source.path.display().to_string().red(), abs.display().to_string().green());
+            println!(
+                "  Source: {} → {}",
+                config.source.path.display().to_string().red(),
+                abs.display().to_string().green()
+            );
             config.source.path = abs;
             save_config(&path, &config)?;
             println!("{}", "✅ Saved".green());
         }
         ConfigAction::Dest { path: new_dest } => {
             let mut config = load_config(cli_config)?;
-            println!("  Dest: {} → {}", config.destination.path.display().to_string().red(), new_dest.display().to_string().green());
+            println!(
+                "  Dest: {} → {}",
+                config.destination.path.display().to_string().red(),
+                new_dest.display().to_string().green()
+            );
             config.destination.path = new_dest;
             save_config(&path, &config)?;
             println!("{}", "✅ Saved".green());
@@ -1076,13 +1215,30 @@ fn cmd_config(cli_config: &Option<PathBuf>, action: ConfigAction) -> Result<()> 
             }
             println!("\n  Total: {}", config.exclude.patterns.len());
         }
-        ConfigAction::Retention { hourly, daily, weekly, monthly } => {
+        ConfigAction::Retention {
+            hourly,
+            daily,
+            weekly,
+            monthly,
+        } => {
             let mut config = load_config(cli_config)?;
             let mut changed = false;
-            if let Some(h) = hourly { config.retention.hourly = h; changed = true; }
-            if let Some(d) = daily { config.retention.daily = d; changed = true; }
-            if let Some(w) = weekly { config.retention.weekly = w; changed = true; }
-            if let Some(m) = monthly { config.retention.monthly = m; changed = true; }
+            if let Some(h) = hourly {
+                config.retention.hourly = h;
+                changed = true;
+            }
+            if let Some(d) = daily {
+                config.retention.daily = d;
+                changed = true;
+            }
+            if let Some(w) = weekly {
+                config.retention.weekly = w;
+                changed = true;
+            }
+            if let Some(m) = monthly {
+                config.retention.monthly = m;
+                changed = true;
+            }
 
             if changed {
                 save_config(&path, &config)?;
@@ -1093,15 +1249,20 @@ fn cmd_config(cli_config: &Option<PathBuf>, action: ConfigAction) -> Result<()> 
             println!("  hourly:  {}", config.retention.hourly);
             println!("  daily:   {}", config.retention.daily);
             println!("  weekly:  {}", config.retention.weekly);
-            println!("  monthly: {} {}", config.retention.monthly,
-                if config.retention.monthly == 0 { "(forever)".dimmed().to_string() } else { String::new() });
+            println!(
+                "  monthly: {} {}",
+                config.retention.monthly,
+                if config.retention.monthly == 0 {
+                    "(forever)".dimmed().to_string()
+                } else {
+                    String::new()
+                }
+            );
         }
         ConfigAction::Edit => {
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
             println!("Opening {} with {}...", path.display(), editor);
-            std::process::Command::new(&editor)
-                .arg(&path)
-                .status()?;
+            std::process::Command::new(&editor).arg(&path).status()?;
         }
     }
     Ok(())
@@ -1115,12 +1276,15 @@ const PLIST_LABEL: &str = "com.roberdan.rusty-mac-backup";
 
 fn plist_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join("Library/LaunchAgents").join(format!("{}.plist", PLIST_LABEL))
+    PathBuf::from(home)
+        .join("Library/LaunchAgents")
+        .join(format!("{}.plist", PLIST_LABEL))
 }
 
 fn generate_plist(interval_secs: u32) -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -1145,12 +1309,17 @@ fn generate_plist(interval_secs: u32) -> String {
     <true/>
 </dict>
 </plist>
-"#, label = PLIST_LABEL, home = home, interval = interval_secs)
+"#,
+        label = PLIST_LABEL,
+        home = home,
+        interval = interval_secs
+    )
 }
 
 fn generate_plist_daily(hour: u32) -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -1178,7 +1347,11 @@ fn generate_plist_daily(hour: u32) -> String {
     <true/>
 </dict>
 </plist>
-"#, label = PLIST_LABEL, home = home, hour = hour)
+"#,
+        label = PLIST_LABEL,
+        home = home,
+        hour = hour
+    )
 }
 
 fn cmd_schedule(action: ScheduleAction) -> Result<()> {
@@ -1213,20 +1386,42 @@ fn cmd_schedule(action: ScheduleAction) -> Result<()> {
                     let content = std::fs::read_to_string(&plist)?;
                     if content.contains("StartCalendarInterval") {
                         // Daily schedule
-                        let hour = content.lines()
+                        let hour = content
+                            .lines()
                             .skip_while(|l| !l.contains("<key>Hour</key>"))
                             .nth(1)
-                            .and_then(|l| l.trim().trim_start_matches("<integer>").trim_end_matches("</integer>").parse::<u32>().ok())
+                            .and_then(|l| {
+                                l.trim()
+                                    .trim_start_matches("<integer>")
+                                    .trim_end_matches("</integer>")
+                                    .parse::<u32>()
+                                    .ok()
+                            })
                             .unwrap_or(0);
-                        println!("{} Schedule active — daily at {:02}:00", "🟢".to_string(), hour);
+                        println!(
+                            "{} Schedule active — daily at {:02}:00",
+                            "🟢".to_string(),
+                            hour
+                        );
                     } else {
                         // Interval schedule
-                        let interval = content.lines()
+                        let interval = content
+                            .lines()
                             .skip_while(|l| !l.contains("StartInterval"))
                             .nth(1)
-                            .and_then(|l| l.trim().trim_start_matches("<integer>").trim_end_matches("</integer>").parse::<u32>().ok())
+                            .and_then(|l| {
+                                l.trim()
+                                    .trim_start_matches("<integer>")
+                                    .trim_end_matches("</integer>")
+                                    .parse::<u32>()
+                                    .ok()
+                            })
                             .unwrap_or(0);
-                        println!("{} Schedule active — every {} min", "🟢".to_string(), interval / 60);
+                        println!(
+                            "{} Schedule active — every {} min",
+                            "🟢".to_string(),
+                            interval / 60
+                        );
                     }
                     // Show last log
                     let home = std::env::var("HOME").unwrap_or_default();
@@ -1245,7 +1440,10 @@ fn cmd_schedule(action: ScheduleAction) -> Result<()> {
                     println!("{} Plist exists but not loaded", "🟡".to_string());
                 }
             } else {
-                println!("{} Schedule not configured. Run: rustyback schedule on", "🔴".to_string());
+                println!(
+                    "{} Schedule not configured. Run: rustyback schedule on",
+                    "🔴".to_string()
+                );
             }
         }
         ScheduleAction::Interval { minutes } => {
