@@ -38,8 +38,17 @@ class StatusManager {
 
         if let status = lastStatus {
             if status.state == "running" {
-                currentState = .running
-                return currentState
+                // Verify backup is actually running — check lock file exists
+                let lockPath = config.destination.path + "/rustymacbackup.lock"
+                if FileManager.default.fileExists(atPath: lockPath) {
+                    currentState = .running
+                    return currentState
+                }
+                // Stale "running" status — process died, reset to idle
+                var fixed = status
+                fixed.state = "idle"
+                try? statusWriter.write(status: fixed)
+                lastStatus = fixed
             }
             if status.state == "error" {
                 currentState = .error

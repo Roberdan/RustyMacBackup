@@ -56,23 +56,33 @@ enum BackupEngine {
         let excludeFilter = ExcludeFilter(patterns: config.exclude.patterns)
         let sourceURLs = allPaths.map { URL(fileURLWithPath: $0) }
 
-        // Use AsyncStream: producer (file walker) feeds consumer (TaskGroup copier)
+        // Atomic counter: walker increments as it discovers files,
+        // consumer reads it for progress total — always ahead of processed count
+        let discoveredCount = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        discoveredCount.initialize(to: 0)
+        let walkerDone = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
+        walkerDone.initialize(to: false)
+        defer { discoveredCount.deallocate(); walkerDone.deallocate() }
+
+        // AsyncStream: producer (walker) feeds consumer (copier)
         let (stream, continuation) = AsyncStream<FileEntry>.makeStream(bufferingPolicy: .bufferingNewest(256))
 
-        // Producer: walk files on background thread, feed into stream
+        // Producer: walk files, increment discoveredCount for each
         let walkerTask = Task.detached(priority: .utility) {
             FileScanner.walk(sources: sourceURLs, basePaths: allPaths, excludeFilter: excludeFilter) { entry in
                 if shouldCancel { return false }
+                OSAtomicIncrement64(discoveredCount)
                 continuation.yield(entry)
                 return true
             }
+            walkerDone.pointee = true
             continuation.finish()
         }
 
-        // Consumer: process files as they arrive with bounded parallelism
+        // Consumer: process files as they arrive
         var stats = BackupStats()
         var errorList: [(path: String, error: Error)] = []
-        var fileIndex: UInt64 = 0
+        var processedCount: UInt64 = 0
 
         try await withThrowingTaskGroup(of: FileResult.self) { group in
             var activeTasks = 0
@@ -80,16 +90,16 @@ enum BackupEngine {
 
             for await file in stream {
                 if shouldCancel { break }
-                fileIndex += 1
+                processedCount += 1
 
                 // Disk check
-                if fileIndex % UInt64(DISK_CHECK_INTERVAL) == 0 {
+                if processedCount % UInt64(DISK_CHECK_INTERVAL) == 0 {
                     guard FileManager.default.fileExists(atPath: inProgressURL.path) else {
                         throw BackupError.diskDisconnected
                     }
                 }
 
-                // Throttle: drain before adding when at capacity
+                // Throttle
                 if activeTasks >= maxConcurrent {
                     if let result = try await group.next() {
                         processResult(result, stats: &stats, errors: &errorList)
@@ -105,13 +115,20 @@ enum BackupEngine {
                 }
                 activeTasks += 1
 
-                // Status update
-                if fileIndex % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
+                // Status update every N files
+                if processedCount % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
                     let elapsed = Date().timeIntervalSince(startTime)
-                    status.filesDone = fileIndex
-                    status.filesTotal = fileIndex // grows as we discover more
+                    let discovered = UInt64(discoveredCount.pointee)
+                    let done = processedCount
+                    status.filesDone = done
+                    status.filesTotal = walkerDone.pointee ? discovered : discovered + 5000 // estimate ahead while scanning
                     status.bytesCopied = stats.bytesCopied
                     status.bytesPerSec = elapsed > 0 ? UInt64(Double(stats.bytesCopied) / elapsed) : 0
+                    if status.bytesPerSec > 0 && done > 0 {
+                        let remaining = status.filesTotal > done ? status.filesTotal - done : 0
+                        let avgBytesPerFile = stats.bytesCopied / done
+                        status.etaSecs = UInt64(remaining * avgBytesPerFile / status.bytesPerSec)
+                    }
                     status.errors = UInt64(errorList.count)
                     status.currentFile = file.relativePath
                     try? statusWriter.write(status: status)
@@ -136,10 +153,11 @@ enum BackupEngine {
         }
 
         // Final status
+        let totalFiles = processedCount
         let duration = Date().timeIntervalSince(startTime)
         status.state = "idle"
-        status.filesDone = fileIndex
-        status.filesTotal = fileIndex
+        status.filesDone = totalFiles
+        status.filesTotal = totalFiles
         status.lastCompleted = ISO8601DateFormatter().string(from: Date())
         status.lastDurationSecs = duration
         status.bytesPerSec = duration > 0 ? UInt64(Double(stats.bytesCopied) / duration) : 0
