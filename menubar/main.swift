@@ -786,6 +786,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedConfig: ParsedConfig = ParsedConfig()
     private var cachedDiskDetail: DiskDetail?
     private var diskDetailLastChecked: Date = .distantPast
+    private var isEjecting: Bool = false
 
     private var isDiskConnected: Bool {
         let dest = cachedConfig.destPath
@@ -849,8 +850,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Immediate UI update on unmount
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.isEjecting = false
             self.wasDiskConnected = false
             self.cachedDiskDetail = nil
+            self.stopAnimation()
             self.buildMenu()
             self.setIdleIcon(stale: self.isBackupStale(self.currentStatus ?? BackupStatus(
                 state: "idle", started_at: nil, last_completed: nil,
@@ -1219,7 +1222,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(openItem)
 
         // Eject Disk — safely stop backup and eject
-        if isDiskConnected {
+        if isEjecting {
+            let ejectingItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            ejectingItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.gold),
+                MLText.colored("Espulsione in corso...", MLColor.gold)
+            )
+            ejectingItem.isEnabled = false
+            menu.addItem(ejectingItem)
+        } else if isDiskConnected {
             let ejectItem = NSMenuItem(title: "", action: #selector(ejectDisk), keyEquivalent: "e")
             ejectItem.keyEquivalentModifierMask = .command
             ejectItem.target = self
@@ -1849,6 +1860,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func stopBackup() {
+        stopAnimation()
+        setIdleIcon(stale: false, hasError: false)
+        buildMenu()
         Shell.runAsync("rustyback stop 2>&1") { [weak self] _ in
             self?.pollStatus()
         }
@@ -1876,17 +1890,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let volumeName = String(parts[1])
         let volumePath = "/Volumes/\(volumeName)"
 
+        // ── Immediate visual feedback ──
+        isEjecting = true
+        startAnimation()
+        buildMenu()
+
         let doEject = { [weak self] in
             Shell.runAsync("diskutil eject \"\(volumePath)\" 2>&1") { [weak self] output in
                 DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.isEjecting = false
+                    self.stopAnimation()
+
                     if output.lowercased().contains("ejected") || output.lowercased().contains("unmounted") {
-                        self?.sendNotification(title: "Disco espulso",
+                        self.sendNotification(title: "Disco espulso ✅",
                                                body: "\(volumeName) rimosso in sicurezza")
                     } else {
-                        self?.sendNotification(title: "Errore espulsione",
-                                               body: "Impossibile espellere \(volumeName)")
+                        // Restore normal icon on failure
+                        self.setIdleIcon(stale: self.isBackupStale(
+                            self.currentStatus ?? BackupStatus(
+                                state: "idle", started_at: nil, last_completed: nil,
+                                last_duration_secs: nil, files_total: nil, files_done: nil,
+                                bytes_copied: nil, bytes_per_sec: nil, eta_secs: nil,
+                                errors: nil, current_file: nil)),
+                            hasError: false)
+                        let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let body = detail.isEmpty
+                            ? "Impossibile espellere \(volumeName)"
+                            : String(detail.prefix(200))
+                        self.sendNotification(title: "Errore espulsione",
+                                               body: body)
                     }
-                    self?.pollStatus()
+                    self.pollStatus()
                 }
             }
         }
@@ -1896,7 +1931,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             sendNotification(title: "Arresto backup...",
                              body: "Interrompo il backup per espellere \(volumeName)")
             Shell.runAsync("rustyback stop 2>&1") { _ in
-                // Wait for backup to fully stop before ejecting
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     doEject()
                 }
@@ -1910,6 +1944,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let mins = sender.tag
         scheduleIntervalMinutes = mins
         scheduleEnabled = true
+        flashConfirmation()
         Shell.runAsync("rustyback schedule interval \(mins) 2>&1") { [weak self] _ in
             self?.readScheduleState()
         }
@@ -1920,6 +1955,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hour = sender.tag
         scheduleEnabled = true
         scheduleIntervalMinutes = 1440 // mark as daily
+        flashConfirmation()
         Shell.runAsync("rustyback schedule daily \(hour) 2>&1") { [weak self] _ in
             self?.readScheduleState()
         }
@@ -1928,6 +1964,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func disableSchedule() {
         scheduleEnabled = false
+        flashConfirmation()
         Shell.runAsync("rustyback schedule off 2>&1") { [weak self] _ in
             self?.readScheduleState()
         }
@@ -1936,6 +1973,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func enableSchedule() {
         scheduleEnabled = true
+        flashConfirmation()
         Shell.runAsync("rustyback schedule on 2>&1") { [weak self] _ in
             self?.readScheduleState()
         }
@@ -2028,6 +2066,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if response == .alertFirstButtonReturn {
                 let pattern = input.stringValue.trimmingCharacters(in: .whitespaces)
                 guard !pattern.isEmpty else { return }
+                self?.flashConfirmation()
                 Shell.runSafeAsync(["config", "exclude", pattern]) { _ in
                     self?.reloadConfig()
                 }
@@ -2037,6 +2076,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func removeExcludePattern(_ sender: NSMenuItem) {
         guard let pattern = sender.representedObject as? String else { return }
+        flashConfirmation()
         Shell.runSafeAsync(["config", "include", pattern]) { [weak self] _ in
             self?.reloadConfig()
         }
@@ -2045,6 +2085,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleCommonExclude(_ sender: NSMenuItem) {
         guard let pattern = sender.representedObject as? String else { return }
         let isCurrentlyActive = cachedConfig.excludePatterns.contains(pattern)
+        flashConfirmation()
         if isCurrentlyActive {
             Shell.runSafeAsync(["config", "include", pattern]) { [weak self] _ in
                 self?.reloadConfig()
@@ -2057,24 +2098,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func changeRetentionHourly(_ sender: NSMenuItem) {
+        flashConfirmation()
         Shell.runAsync("rustyback config retention --hourly \(sender.tag) 2>&1") { [weak self] _ in
             self?.reloadConfig()
         }
     }
 
     @objc private func changeRetentionDaily(_ sender: NSMenuItem) {
+        flashConfirmation()
         Shell.runAsync("rustyback config retention --daily \(sender.tag) 2>&1") { [weak self] _ in
             self?.reloadConfig()
         }
     }
 
     @objc private func changeRetentionWeekly(_ sender: NSMenuItem) {
+        flashConfirmation()
         Shell.runAsync("rustyback config retention --weekly \(sender.tag) 2>&1") { [weak self] _ in
             self?.reloadConfig()
         }
     }
 
     @objc private func changeRetentionMonthly(_ sender: NSMenuItem) {
+        flashConfirmation()
         Shell.runAsync("rustyback config retention --monthly \(sender.tag) 2>&1") { [weak self] _ in
             self?.reloadConfig()
         }
@@ -2150,6 +2195,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             content.sound = .default
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request)
+        }
+    }
+
+    /// Brief icon flash to confirm a user action was received
+    private func flashConfirmation() {
+        guard let button = statusItem.button else { return }
+        let savedImage = button.image
+        button.image = iconWithDot(dotColor: .systemBlue)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self else { return }
+            // Only restore if not in another state (backup/eject animation)
+            if self.animationTimer == nil {
+                button.image = savedImage
+            }
         }
     }
 }
