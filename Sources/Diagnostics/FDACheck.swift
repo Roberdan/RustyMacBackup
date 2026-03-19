@@ -35,7 +35,10 @@ enum FDACheck {
 
     static func openFDASettings() {
         #if canImport(AppKit)
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+        // macOS 14+ (Sonoma): direct link to Full Disk Access pane
+        if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
         }
         #endif

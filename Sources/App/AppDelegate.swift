@@ -280,9 +280,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tagName = json["tag_name"] as? String else { return }
-            let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-            let currentTag = current.hasPrefix("v") ? current : "v\(current)"
-            if tagName != currentTag {
+            let remoteVersion = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
+            let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+            // Only show update if remote is NEWER (not just different)
+            if remoteVersion.compare(currentVersion, options: .numeric) == .orderedDescending {
                 DispatchQueue.main.async {
                     self.availableUpdate = tagName
                     self.rebuildMenu()

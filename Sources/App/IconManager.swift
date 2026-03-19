@@ -8,16 +8,7 @@ class IconManager {
 
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
-        setupIcon()
-    }
-
-    private func setupIcon() {
-        guard let button = statusItem.button else { return }
-        if let image = NSImage(systemSymbolName: "externaldrive.badge.timemachine",
-                               accessibilityDescription: "RustyMacBackup") {
-            image.isTemplate = true
-            button.image = image
-        }
+        setDotColor(nil)
     }
 
     func setState(_ state: AppState) {
@@ -34,7 +25,6 @@ class IconManager {
         }
     }
 
-    // Completion flash: bright green briefly then settle to normal verde
     func flashCompletion() {
         setDotColor(.green)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
@@ -42,7 +32,6 @@ class IconManager {
         }
     }
 
-    // Preference flash: brief blue, then restore current state
     func flashPreference() {
         setDotColor(MLColor.info)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
@@ -51,7 +40,58 @@ class IconManager {
         }
     }
 
-    // MARK: - Private
+    // MARK: - Icon Composition (ported from pre-migration menu bar app)
+
+    private func setDotColor(_ dotColor: NSColor?) {
+        guard let button = statusItem.button else { return }
+
+        let symConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular, scale: .medium)
+        guard let baseSymbol = NSImage(systemSymbolName: "clock.arrow.circlepath",
+                                        accessibilityDescription: "RustyMacBackup")?
+                .withSymbolConfiguration(symConfig) else { return }
+        baseSymbol.isTemplate = true
+
+        guard let dotColor = dotColor else {
+            button.image = baseSymbol
+            return
+        }
+
+        let baseSize = baseSymbol.size
+        let totalWidth = baseSize.width + 5
+        let finalSize = NSSize(width: totalWidth, height: baseSize.height)
+
+        let composite = NSImage(size: finalSize, flipped: false) { _ in
+            let iconColor = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor.white : NSColor.black
+            let tinted = baseSymbol.copy() as! NSImage
+            tinted.isTemplate = false
+            tinted.lockFocus()
+            iconColor.set()
+            NSRect(origin: .zero, size: baseSize).fill(using: .sourceAtop)
+            tinted.unlockFocus()
+            tinted.draw(in: NSRect(x: 0, y: 0, width: baseSize.width, height: baseSize.height))
+
+            let dotD: CGFloat = 6
+            let dotX = totalWidth - dotD - 0.5
+            let dotY: CGFloat = 0.5
+            let dotRect = NSRect(x: dotX, y: dotY, width: dotD, height: dotD)
+
+            let outlineRect = dotRect.insetBy(dx: -1.2, dy: -1.2)
+            let bgColor = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(white: 0.15, alpha: 1) : NSColor.white
+            bgColor.setFill()
+            NSBezierPath(ovalIn: outlineRect).fill()
+
+            dotColor.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+
+            return true
+        }
+        composite.isTemplate = false
+        button.image = composite
+    }
+
+    // MARK: - Animations
 
     private func startRunningAnimation() {
         pulseState = false
@@ -75,27 +115,6 @@ class IconManager {
                 self?.setDotColor(count % 2 == 0 ? MLColor.rosso : .clear)
             }
         }
-    }
-
-    private func setDotColor(_ color: NSColor) {
-        guard let button = statusItem.button else { return }
-        let size = NSSize(width: 22, height: 22)
-        let image = NSImage(size: size, flipped: false) { _ in
-            if let baseIcon = NSImage(systemSymbolName: "externaldrive.badge.timemachine",
-                                      accessibilityDescription: nil) {
-                baseIcon.draw(in: NSRect(x: 1, y: 3, width: 18, height: 18))
-            }
-            let dotRect = NSRect(x: 15, y: 1, width: 7, height: 7)
-            color.setFill()
-            NSBezierPath(ovalIn: dotRect).fill()
-            NSColor.black.withAlphaComponent(0.3).setStroke()
-            let border = NSBezierPath(ovalIn: dotRect.insetBy(dx: 0.5, dy: 0.5))
-            border.lineWidth = 0.5
-            border.stroke()
-            return true
-        }
-        image.isTemplate = false
-        button.image = image
     }
 
     private func stopAnimations() {
