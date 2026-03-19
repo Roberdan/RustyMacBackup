@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1] - 2026-03-19
+
+### Fixed
+- **Backup failures now diagnosed with actionable guidance**: "Operation not permitted" errors show exactly how to fix (Full Disk Access, disk permissions, or Finder instructions) — both in CLI and in the menu bar
+- **Menu bar shows error state clearly**: red "ERRORE" header + specific fix instructions instead of misleading stale data ("0 secondi · 2 file · 2 bytes")
+- **Proactive disk diagnostics**: write test runs automatically when disk connects, warns in menu if disk is not writable with step-by-step fix
+- **Full Disk Access detection actually works**: `checkFullDiskAccess()` now probes TCC-protected dirs (was always returning true — FDA warning screen never showed)
+- **Eject disk gives immediate visual feedback**: icon pulses during eject, menu shows "Espulsione in corso...", success/failure notification with details
+- **All user actions give visual feedback**: brief blue icon flash confirms schedule, retention, and exclude pattern changes
+- **Stop backup responds immediately**: icon and menu update instantly instead of waiting for next poll
+- `write_error_status()` no longer preserves stale file counts from previous runs
+
 ## [0.3.0] - 2026-03-19
 
 ### Fixed
