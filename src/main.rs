@@ -174,12 +174,12 @@ fn cmd_init() -> Result<()> {
     if config_path.exists() {
         println!("{} Config already exists: {}", "⚠".yellow(), config_path.display());
         println!("   Run `rustyback config edit` to modify it.");
-        println!("   Run `rustyback init --force` to reconfigure from scratch.");
+        println!("   Run `rustyback init` again to reconfigure, or `rustyback config edit` to edit manually.");
         return Ok(());
     }
 
     let total_steps = 6;
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let terminal_name = std::env::var("TERM_PROGRAM").unwrap_or_else(|_| "Terminal".to_string());
 
     println!();
@@ -422,36 +422,6 @@ fn is_volume_encrypted(path: &std::path::Path) -> bool {
 }
 
 /// Verify the destination volume is encrypted; bail if not
-fn require_encrypted_volume(dest: &std::path::Path) -> Result<()> {
-    // Find the volume mount point (e.g. /Volumes/RoberdanBCK 1)
-    let volume_path = if dest.starts_with("/Volumes") {
-        // Extract /Volumes/<name>
-        let components: Vec<_> = dest.components().collect();
-        if components.len() >= 3 {
-            PathBuf::from("/Volumes").join(components[2].as_os_str())
-        } else {
-            dest.to_path_buf()
-        }
-    } else {
-        dest.to_path_buf()
-    };
-
-    if !is_volume_encrypted(&volume_path) {
-        anyhow::bail!(
-            "🔒 Security: backup destination is NOT encrypted!\n\n\
-             Volume: {}\n\n\
-             RustyMacBackup requires an encrypted disk to protect your data.\n\
-             To encrypt this disk:\n\
-             1. Open Finder → right-click the disk → Encrypt\n\
-             2. Set a strong password\n\
-             3. Wait for encryption to complete\n\
-             4. Run `rustyback init` again",
-            volume_path.display()
-        );
-    }
-    Ok(())
-}
-
 fn get_volume_free_space(path: &std::path::Path) -> Result<u64> {
     use std::ffi::CString;
     use std::mem::MaybeUninit;
@@ -584,7 +554,7 @@ monthly = 0
 }
 
 fn cmd_stop() -> Result<()> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let status_path = PathBuf::from(&home).join(".local/share/rusty-mac-backup/status.json");
 
     // Read lock file to find PID
@@ -606,7 +576,12 @@ fn cmd_stop() -> Result<()> {
                     println!("Stopping backup (PID {})...", pid);
                     unsafe { libc::kill(pid, libc::SIGTERM); }
                     std::thread::sleep(std::time::Duration::from_secs(2));
-                    // Clean up
+                    // Verify process exited, SIGKILL if still alive
+                    if unsafe { libc::kill(pid, 0) } == 0 {
+                        println!("Process still alive, sending SIGKILL...");
+                        unsafe { libc::kill(pid, libc::SIGKILL); }
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
                     let _ = std::fs::remove_file(&lock_path);
                     println!("{} Backup stopped.", "✅".green());
                     return Ok(());
@@ -833,6 +808,17 @@ fn cmd_prune(config_path: &Option<PathBuf>, dry_run: bool) -> Result<()> {
 
     if dry_run {
         println!("{}", "Dry run — nothing will be deleted".yellow());
+        // Show what would be pruned without actually deleting
+        let pruned = retention::prune_backups(&config.destination.path, &policy)?;
+        if pruned.is_empty() {
+            println!("{}", "Nothing to prune.".green());
+        } else {
+            println!("Would prune {} backups:", pruned.len());
+            for p in &pruned {
+                println!("  {}", p);
+            }
+        }
+        return Ok(());
     }
 
     let pruned = retention::prune_backups(&config.destination.path, &policy)?;
@@ -1126,12 +1112,12 @@ fn cmd_config(cli_config: &Option<PathBuf>, action: ConfigAction) -> Result<()> 
 const PLIST_LABEL: &str = "com.roberdan.rusty-mac-backup";
 
 fn plist_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join("Library/LaunchAgents").join(format!("{}.plist", PLIST_LABEL))
 }
 
 fn generate_plist(interval_secs: u32) -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1161,7 +1147,7 @@ fn generate_plist(interval_secs: u32) -> String {
 }
 
 fn generate_plist_daily(hour: u32) -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

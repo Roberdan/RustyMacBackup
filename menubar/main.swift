@@ -4,20 +4,36 @@ import UserNotifications
 // MARK: - Maranello Luce Design Colors (from tokens-color.css)
 
 enum MLColor {
-    // Primary Ferrari palette
-    static let gold    = NSColor(red: 0xFF/255, green: 0xC7/255, blue: 0x2C/255, alpha: 1) // --giallo-ferrari
-    static let rosso   = NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1) // --rosso-corsa
-    static let verde   = NSColor(red: 0x00/255, green: 0xA6/255, blue: 0x51/255, alpha: 1) // --verde-racing
-    static let nero    = NSColor(red: 0x11/255, green: 0x11/255, blue: 0x11/255, alpha: 1) // --nero-carbon
-    static let avorio  = NSColor(red: 0xFA/255, green: 0xF3/255, blue: 0xE6/255, alpha: 1) // --avorio-chiaro
+    // Adaptive colors: darker variant for light mode, original for dark
+    static let gold = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xFF/255, green: 0xC7/255, blue: 0x2C/255, alpha: 1)  // dark: giallo-ferrari
+            : NSColor(red: 0xB8/255, green: 0x86/255, blue: 0x00/255, alpha: 1)  // light: darker gold
+    }
+    static let rosso = NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1)  // rosso-corsa works on both
+    static let verde = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x00/255, green: 0xA6/255, blue: 0x51/255, alpha: 1)  // dark: verde-racing
+            : NSColor(red: 0x00/255, green: 0x7A/255, blue: 0x3D/255, alpha: 1)  // light: darker green
+    }
+    static let nero    = NSColor(red: 0x11/255, green: 0x11/255, blue: 0x11/255, alpha: 1)
+    static let avorio  = NSColor(red: 0xFA/255, green: 0xF3/255, blue: 0xE6/255, alpha: 1)
     // Extended palette
-    static let goldLight  = NSColor(red: 0xFF/255, green: 0xD8/255, blue: 0x5C/255, alpha: 1) // --giallo-ferrari-light
-    static let verdeLt    = NSColor(red: 0x00/255, green: 0xC9/255, blue: 0x66/255, alpha: 1) // --verde-racing-light
-    static let arancio    = NSColor(red: 0xD4/255, green: 0x62/255, blue: 0x2B/255, alpha: 1) // --arancio-warm
-    static let info       = NSColor(red: 0x44/255, green: 0x8A/255, blue: 0xFF/255, alpha: 1) // --status-info
-    static let warning    = NSColor(red: 0xFF/255, green: 0xB3/255, blue: 0x00/255, alpha: 1) // --status-warning
-    static let grigio     = NSColor(red: 0x9E/255, green: 0x9E/255, blue: 0x9E/255, alpha: 1) // --grigio-chiaro / --mn-text-muted
-    static let dimmed  = NSColor.secondaryLabelColor
+    static let goldLight  = NSColor(red: 0xFF/255, green: 0xD8/255, blue: 0x5C/255, alpha: 1)
+    static let verdeLt    = NSColor(red: 0x00/255, green: 0xC9/255, blue: 0x66/255, alpha: 1)
+    static let arancio    = NSColor(red: 0xD4/255, green: 0x62/255, blue: 0x2B/255, alpha: 1)
+    static let info = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x44/255, green: 0x8A/255, blue: 0xFF/255, alpha: 1)  // dark: blue
+            : NSColor(red: 0x00/255, green: 0x5A/255, blue: 0xCC/255, alpha: 1)  // light: darker blue
+    }
+    static let warning = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xFF/255, green: 0xB3/255, blue: 0x00/255, alpha: 1)
+            : NSColor(red: 0xCC/255, green: 0x88/255, blue: 0x00/255, alpha: 1)
+    }
+    static let grigio  = NSColor.secondaryLabelColor  // auto-adapts to light/dark
+    static let dimmed  = NSColor.tertiaryLabelColor    // auto-adapts to light/dark
 }
 
 // MARK: - Attributed String Helpers
@@ -76,7 +92,7 @@ enum MLText {
         let remain = width - filled
         if remain > 0 {
             result.append(NSAttributedString(string: String(repeating: "\u{2581}", count: remain),
-                attributes: [.font: monoFont, .foregroundColor: MLColor.grigio.withAlphaComponent(0.25)]))
+                attributes: [.font: monoFont, .foregroundColor: NSColor.separatorColor.withAlphaComponent(0.3)]))
         }
 
         // Percentage in primary text
@@ -145,11 +161,11 @@ class ProgressBarView: NSView {
         let barH: CGFloat = 12
         let cornerR: CGFloat = barH / 2
 
-        // Background track
+        // Background track — adapts to light/dark
         let bgPath = CGPath(roundedRect: CGRect(x: barX, y: barY, width: barW, height: barH),
                             cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
         ctx.addPath(bgPath)
-        ctx.setFillColor(NSColor(white: 0.2, alpha: 0.5).cgColor)
+        ctx.setFillColor(NSColor.separatorColor.withAlphaComponent(0.3).cgColor)
         ctx.fillPath()
 
         // Filled portion with gradient: rosso → gold → verde
@@ -217,19 +233,19 @@ class SpeedometerView: NSView {
         let endAngle: CGFloat = -30 * .pi / 180
         let totalSweep: CGFloat = 240
 
-        // Background arc
-        ctx.setStrokeColor(NSColor(white: 0.25, alpha: 0.5).cgColor)
+        // Background arc — adapts to appearance
+        ctx.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.4).cgColor)
         ctx.setLineWidth(5)
         ctx.addArc(center: CGPoint(x: centerX, y: centerY), radius: radius,
                    startAngle: startAngle, endAngle: endAngle, clockwise: true)
         ctx.strokePath()
 
-        // Active arc — gold
+        // Active arc — gold (adaptive)
         let valuePct = min(speedMBps / maxSpeed, 1.0)
         let valueAngle = startAngle - CGFloat(valuePct * Double(totalSweep)) * .pi / 180
 
         if valuePct > 0.01 {
-            ctx.setStrokeColor(CGColor(red: 1.0, green: 0.78, blue: 0.17, alpha: 1.0))
+            ctx.setStrokeColor(MLColor.gold.cgColor)
             ctx.setLineWidth(5)
             ctx.addArc(center: CGPoint(x: centerX, y: centerY), radius: radius,
                        startAngle: startAngle, endAngle: valueAngle, clockwise: true)
@@ -242,7 +258,7 @@ class SpeedometerView: NSView {
             let tickAngle = startAngle - CGFloat(tickPct * Double(totalSweep)) * .pi / 180
             let inner = radius - 8
             let outer = radius + 1
-            ctx.setStrokeColor(NSColor(white: 0.45, alpha: 0.6).cgColor)
+            ctx.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
             ctx.setLineWidth(1)
             ctx.move(to: CGPoint(x: centerX + cos(tickAngle) * inner,
                                   y: centerY + sin(tickAngle) * inner))
@@ -255,7 +271,7 @@ class SpeedometerView: NSView {
             let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
             let labelAttrs: [NSAttributedString.Key: Any] = [
                 .font: labelFont,
-                .foregroundColor: NSColor(white: 0.5, alpha: 0.7)
+                .foregroundColor: NSColor.tertiaryLabelColor
             ]
             let labelSize = (label as NSString).size(withAttributes: labelAttrs)
             let labelR = radius + 8
@@ -292,7 +308,7 @@ class SpeedometerView: NSView {
         // "MB/s" unit
         let unitAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 7, weight: .medium),
-            .foregroundColor: NSColor(white: 0.55, alpha: 1.0)
+            .foregroundColor: NSColor.secondaryLabelColor
         ]
         let unitSize = ("MB/s" as NSString).size(withAttributes: unitAttrs)
         ("MB/s" as NSString).draw(
@@ -304,11 +320,11 @@ class SpeedometerView: NSView {
             let rightX: CGFloat = gaugeSize + 24
             let labelAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor(white: 0.55, alpha: 1.0)
+                .foregroundColor: NSColor.secondaryLabelColor
             ]
             let valueAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.boldSystemFont(ofSize: 13),
-                .foregroundColor: NSColor(red: 1.0, green: 0.78, blue: 0.17, alpha: 1.0)
+                .foregroundColor: MLColor.gold
             ]
             ("finisce tra" as NSString).draw(at: CGPoint(x: rightX, y: 50), withAttributes: labelAttrs)
             (etaText as NSString).draw(at: CGPoint(x: rightX, y: 30), withAttributes: valueAttrs)
@@ -424,6 +440,7 @@ enum Fmt {
 enum Shell {
     private static let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
     private static let pathPrefix = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+    private static let rustybackPath = "\(home)/.local/bin/rustyback"
 
     @discardableResult
     static func run(_ command: String) -> String {
@@ -442,6 +459,36 @@ enum Shell {
         }
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    // Safe execution with argument array (no shell injection)
+    @discardableResult
+    static func runSafe(_ args: [String]) -> String {
+        let task = Process()
+        let pipe = Pipe()
+        // Try rustyback path directly, fallback to PATH lookup
+        let execPath = FileManager.default.fileExists(atPath: rustybackPath)
+            ? rustybackPath : "/usr/local/bin/rustyback"
+        task.executableURL = URL(fileURLWithPath: execPath)
+        task.arguments = args
+        task.standardOutput = pipe
+        task.standardError = pipe
+        task.environment = ProcessInfo.processInfo.environment
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return "error: \(error.localizedDescription)"
+        }
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    static func runSafeAsync(_ args: [String], completion: @escaping (String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = runSafe(args)
+            DispatchQueue.main.async { completion(result) }
+        }
     }
 
     static func runAsync(_ command: String, completion: @escaping (String) -> Void) {
@@ -636,6 +683,7 @@ enum VolumeScanner {
         return entries.sorted().compactMap { name -> VolumeInfo? in
             guard !name.hasPrefix("."),
                   name != "Macintosh HD",
+                  name != "Macintosh HD - Data",
                   name != "Recovery" else { return nil }
             let volumePath = "/Volumes/\(name)"
             var isDir: ObjCBool = false
@@ -708,10 +756,9 @@ enum DiskInfo {
             }
         }
 
-        guard free > 0 else { return nil }
-
         let encrypted = VolumeScanner.checkEncryption(volumeRoot)
-        return DiskDetail(volumeName: volumeName, freeSpace: Fmt.bytes(free), isEncrypted: encrypted)
+        let freeStr = free > 0 ? Fmt.bytes(free) : "0 bytes"
+        return DiskDetail(volumeName: volumeName, freeSpace: freeStr, isEncrypted: encrypted)
     }
 
     static func freeSpace() -> String? {
@@ -1707,16 +1754,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openBackupFolder() {
-        Shell.runAsync("rustyback config show 2>/dev/null") { output in
-            let components = output.components(separatedBy: "\"")
-            for c in components {
-                if c.hasPrefix("/Volumes/") || c.hasPrefix("/") && c.contains("Backup") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: c))
-                    return
-                }
+        let dest = cachedConfig.destPath
+        if !dest.isEmpty && FileManager.default.fileExists(atPath: dest) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: dest))
+        } else if !dest.isEmpty {
+            // Disk might be disconnected — try parent volume
+            let url = URL(fileURLWithPath: dest)
+            let volume = url.deletingLastPathComponent()
+            if FileManager.default.fileExists(atPath: volume.path) {
+                NSWorkspace.shared.open(volume)
             }
-            // Fallback: open home
-            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()))
         }
     }
 
@@ -1842,7 +1889,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if response == .alertFirstButtonReturn {
                 let pattern = input.stringValue.trimmingCharacters(in: .whitespaces)
                 guard !pattern.isEmpty else { return }
-                Shell.runAsync("rustyback config exclude \"\(pattern)\" 2>&1") { _ in
+                Shell.runSafeAsync(["config", "exclude", pattern]) { _ in
                     self?.reloadConfig()
                 }
             }
@@ -1851,7 +1898,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func removeExcludePattern(_ sender: NSMenuItem) {
         guard let pattern = sender.representedObject as? String else { return }
-        Shell.runAsync("rustyback config include \"\(pattern)\" 2>&1") { [weak self] _ in
+        Shell.runSafeAsync(["config", "include", pattern]) { [weak self] _ in
             self?.reloadConfig()
         }
     }
@@ -1860,11 +1907,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let pattern = sender.representedObject as? String else { return }
         let isCurrentlyActive = cachedConfig.excludePatterns.contains(pattern)
         if isCurrentlyActive {
-            Shell.runAsync("rustyback config include \"\(pattern)\" 2>&1") { [weak self] _ in
+            Shell.runSafeAsync(["config", "include", pattern]) { [weak self] _ in
                 self?.reloadConfig()
             }
         } else {
-            Shell.runAsync("rustyback config exclude \"\(pattern)\" 2>&1") { [weak self] _ in
+            Shell.runSafeAsync(["config", "exclude", pattern]) { [weak self] _ in
                 self?.reloadConfig()
             }
         }

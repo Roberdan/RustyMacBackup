@@ -82,7 +82,7 @@ impl Config {
     }
 
     pub fn default_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         PathBuf::from(home).join(".config").join("rusty-mac-backup").join("config.toml")
     }
 }

@@ -30,7 +30,6 @@ const MIN_FREE_SPACE: u64 = 1_073_741_824;
 const IOPOL_TYPE_DISK: i32 = 1;
 const IOPOL_SCOPE_PROCESS: i32 = 0;
 const IOPOL_DEFAULT: i32 = 0;
-const IOPOL_UTILITY: i32 = 4;
 const IOPOL_THROTTLE: i32 = 3;
 
 unsafe extern "C" {
@@ -77,13 +76,13 @@ pub struct BackupStatusFile {
 }
 
 pub fn status_file_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home)
         .join(".local/share/rusty-mac-backup/status.json")
 }
 
 pub fn errors_file_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/roberdan".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home)
         .join(".local/share/rusty-mac-backup/errors.json")
 }
@@ -451,7 +450,7 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
 
         // Periodically check if the destination disk is still connected
         let done_so_far = a_done.load(Ordering::Relaxed);
-        if done_so_far % 100 == 0 && !in_progress.exists() {
+        if done_so_far > 0 && done_so_far % 100 == 0 && !in_progress.exists() {
             disk_disconnected.store(true, Ordering::Relaxed);
             return;
         }
