@@ -616,8 +616,10 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
         println!("{}", "🔋 Note: running on battery. Backup will use low priority I/O.".yellow());
     }
 
-    // Check if destination disk is connected
-    if !config.destination.path.exists() && !config.destination.path.starts_with("/tmp") {
+    // Check if destination disk is connected (exists AND actually mounted)
+    let dest_exists = config.destination.path.exists();
+    let dest_mounted = backup::is_volume_mounted(&config.destination.path);
+    if (!dest_exists || !dest_mounted) && !config.destination.path.starts_with("/tmp") {
         // Extract volume name for a friendly message
         let vol_name = config.destination.path.components()
             .nth(2)

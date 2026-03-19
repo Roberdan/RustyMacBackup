@@ -8,9 +8,13 @@ enum MLColor {
     static let gold = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 0xFF/255, green: 0xC7/255, blue: 0x2C/255, alpha: 1)  // dark: giallo-ferrari
-            : NSColor(red: 0xB8/255, green: 0x86/255, blue: 0x00/255, alpha: 1)  // light: darker gold
+            : NSColor(red: 0x8B/255, green: 0x6B/255, blue: 0x00/255, alpha: 1)  // light: deep amber
     }
-    static let rosso = NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1)  // rosso-corsa works on both
+    static let rosso = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xDC/255, green: 0x00/255, blue: 0x00/255, alpha: 1)
+            : NSColor(red: 0xAA/255, green: 0x00/255, blue: 0x00/255, alpha: 1)  // light: deeper red
+    }
     static let verde = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 0x00/255, green: 0xA6/255, blue: 0x51/255, alpha: 1)  // dark: verde-racing
@@ -30,7 +34,7 @@ enum MLColor {
     static let warning = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 0xFF/255, green: 0xB3/255, blue: 0x00/255, alpha: 1)
-            : NSColor(red: 0xCC/255, green: 0x88/255, blue: 0x00/255, alpha: 1)
+            : NSColor(red: 0x99/255, green: 0x66/255, blue: 0x00/255, alpha: 1)
     }
     static let grigio  = NSColor.secondaryLabelColor  // auto-adapts to light/dark
     static let dimmed  = NSColor.tertiaryLabelColor    // auto-adapts to light/dark
@@ -786,12 +790,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDiskConnected: Bool {
         let dest = cachedConfig.destPath
         guard !dest.isEmpty else { return false }
-        // Check if the volume root exists
         if dest.hasPrefix("/Volumes/") {
             let parts = dest.split(separator: "/", maxSplits: 3)
             if parts.count >= 2 {
-                let volRoot = "/Volumes/\(parts[1])"
-                return FileManager.default.fileExists(atPath: volRoot)
+                let volumeName = String(parts[1])
+                // Use mountedVolumeURLs to avoid stale mountpoints left by macOS
+                let mountedURLs = FileManager.default.mountedVolumeURLs(
+                    includingResourceValuesForKeys: [.volumeIsLocalKey, .volumeIsRemovableKey],
+                    options: [.skipHiddenVolumes]
+                ) ?? []
+                return mountedURLs.contains { $0.path == "/Volumes/\(volumeName)" }
             }
         }
         return FileManager.default.fileExists(atPath: dest)
@@ -812,12 +820,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pollStatus()
         schedulePollTimer(interval: 30)
         requestNotificationPermission()
+        registerVolumeObservers()
 
         // Check for updates on launch (after 5s delay to not block startup)
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
             AutoUpdater.shared.checkForUpdates { [weak self] hasUpdate in
                 if hasUpdate { self?.buildMenu() }
             }
+        }
+    }
+
+    private func registerVolumeObservers() {
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(self, selector: #selector(volumeDidMount(_:)),
+                       name: NSWorkspace.didMountNotification, object: nil)
+        ws.addObserver(self, selector: #selector(volumeDidUnmount(_:)),
+                       name: NSWorkspace.didUnmountNotification, object: nil)
+    }
+
+    @objc private func volumeDidMount(_ notification: Notification) {
+        // Immediate disk detection on mount (no 30s wait)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.pollStatus()
+        }
+    }
+
+    @objc private func volumeDidUnmount(_ notification: Notification) {
+        // Immediate UI update on unmount
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.wasDiskConnected = false
+            self.cachedDiskDetail = nil
+            self.buildMenu()
+            self.setIdleIcon(stale: self.isBackupStale(self.currentStatus ?? BackupStatus(
+                state: "idle", started_at: nil, last_completed: nil,
+                last_duration_secs: nil, files_total: nil, files_done: nil,
+                bytes_copied: nil, bytes_per_sec: nil, eta_secs: nil,
+                errors: nil, current_file: nil)), hasError: false)
         }
     }
 
@@ -848,59 +887,99 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    /// Compose a template SF Symbol icon + colored status dot (Teams-style)
+    private func iconWithDot(dotColor: NSColor?) -> NSImage {
+        // Get the base SF Symbol as template
+        let symConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular, scale: .medium)
+        guard let baseSymbol = NSImage(systemSymbolName: "clock.arrow.circlepath",
+                                        accessibilityDescription: "RustyMacBackup")?
+                .withSymbolConfiguration(symConfig) else {
+            let fallback = NSImage()
+            fallback.size = NSSize(width: 18, height: 18)
+            return fallback
+        }
+        baseSymbol.isTemplate = true
+
+        // If no dot needed, just return the template icon
+        guard let dotColor = dotColor else { return baseSymbol }
+
+        // Composite: render template icon + colored dot into a single image
+        let baseSize = baseSymbol.size
+        let totalWidth = baseSize.width + 5  // extra space for the dot
+        let finalSize = NSSize(width: totalWidth, height: baseSize.height)
+
+        let composite = NSImage(size: finalSize, flipped: false) { rect in
+            // Draw the base symbol (as template — the system tints it for us)
+            // We need to draw it as black since we're compositing
+            let iconColor = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor.white : NSColor.black
+            let tinted = baseSymbol.copy() as! NSImage
+            tinted.isTemplate = false
+            tinted.lockFocus()
+            iconColor.set()
+            NSRect(origin: .zero, size: baseSize).fill(using: .sourceAtop)
+            tinted.unlockFocus()
+            tinted.draw(in: NSRect(x: 0, y: 0, width: baseSize.width, height: baseSize.height))
+
+            // Colored dot — bottom right corner
+            let dotD: CGFloat = 6
+            let dotX = totalWidth - dotD - 0.5
+            let dotY: CGFloat = 0.5
+            let dotRect = NSRect(x: dotX, y: dotY, width: dotD, height: dotD)
+
+            // White outline ring
+            let outlineRect = dotRect.insetBy(dx: -1.2, dy: -1.2)
+            let bgColor = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(white: 0.15, alpha: 1) : NSColor.white
+            bgColor.setFill()
+            NSBezierPath(ovalIn: outlineRect).fill()
+
+            // Colored dot
+            dotColor.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+
+            return true
+        }
+        composite.isTemplate = false
+        return composite
+    }
+
     private func setIdleIcon(stale: Bool, hasError: Bool) {
         stopAnimation()
         guard let button = statusItem.button else { return }
 
-        let symbolName: String
+        let dotColor: NSColor?
         if !isDiskConnected {
-            symbolName = "externaldrive.trianglebadge.exclamationmark"
+            dotColor = .systemRed
         } else if hasError {
-            symbolName = "gauge.open.with.lines.needle.84percent.exclamation"
+            dotColor = .systemOrange
         } else if stale {
-            symbolName = "gauge.with.dots.needle.bottom.0percent"
+            dotColor = .systemYellow
         } else {
-            symbolName = "externaldrive.fill.badge.checkmark"
+            dotColor = .systemGreen
         }
 
-        if let img = NSImage(systemSymbolName: symbolName,
-                              accessibilityDescription: "RustyMacBackup") {
-            img.isTemplate = true
-            button.image = img
-            button.title = ""
-        } else {
-            button.image = nil
-            button.title = "RMB"
-        }
+        button.image = iconWithDot(dotColor: dotColor)
+        button.title = ""
     }
 
     private func startAnimation() {
         guard animationTimer == nil else { return }
         animationFrame = 0
 
-        // Ferrari tachometer animation: needle sweeping up as backup progresses
-        let gaugeFrames = [
-            "gauge.with.dots.needle.bottom.0percent",
-            "gauge.with.dots.needle.33percent",
-            "gauge.with.dots.needle.bottom.50percent",
-            "gauge.with.dots.needle.67percent",
+        let frames = [
+            iconWithDot(dotColor: .systemBlue),
+            iconWithDot(dotColor: .systemCyan),
         ]
-        let images = gaugeFrames.compactMap { name -> NSImage? in
-            let img = NSImage(systemSymbolName: name, accessibilityDescription: "Backing up")
-            img?.isTemplate = true
-            return img
-        }
 
-        guard !images.isEmpty else { return }
-
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
             guard let self = self, let button = self.statusItem.button else { return }
-            self.animationFrame = (self.animationFrame + 1) % images.count
-            button.image = images[self.animationFrame]
+            self.animationFrame = (self.animationFrame + 1) % frames.count
+            button.image = frames[self.animationFrame]
             button.title = ""
         }
         if let button = statusItem.button {
-            button.image = images[0]
+            button.image = frames[0]
             button.title = ""
         }
     }
@@ -1075,15 +1154,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Normal menu -- config exists and FDA granted
-        // Header with Maranello styling
+        // Header — clean and colored
         let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         if currentStatus?.state == "running" {
             header.attributedTitle = MLText.build(
                 MLText.colored("RustyMacBackup", MLColor.gold),
-                MLText.small("  LIVE", MLColor.verde)
+                MLText.small("  BACKUP IN CORSO", MLColor.verde)
+            )
+        } else if isDiskConnected {
+            header.attributedTitle = MLText.build(
+                MLText.colored("RustyMacBackup", MLColor.verde)
             )
         } else {
-            header.attributedTitle = MLText.header("RustyMacBackup")
+            header.attributedTitle = MLText.build(
+                MLText.colored("RustyMacBackup", MLColor.rosso)
+            )
         }
         header.isEnabled = false
         menu.addItem(header)
@@ -1106,14 +1191,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if currentStatus?.state == "running" {
             backupNowItem.attributedTitle = MLText.build(
                 MLText.dot(MLColor.gold),
-                MLText.colored("Backup in corso", MLColor.gold),
-                MLText.small("  stop: \u{2318}B", MLColor.grigio)
+                MLText.colored("Ferma backup", MLColor.gold)
             )
             backupNowItem.action = #selector(stopBackup)
         } else if !isDiskConnected {
             backupNowItem.attributedTitle = MLText.build(
                 MLText.dot(MLColor.rosso),
-                MLText.small("Backup Now — disco assente", MLColor.rosso)
+                MLText.colored("Backup Now", MLColor.rosso),
+                MLText.small("  disco assente", MLColor.grigio)
             )
             backupNowItem.isEnabled = false
         } else {
@@ -1132,6 +1217,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             openItem.isEnabled = false
         }
         menu.addItem(openItem)
+
+        // Eject Disk — safely stop backup and eject
+        if isDiskConnected {
+            let ejectItem = NSMenuItem(title: "", action: #selector(ejectDisk), keyEquivalent: "e")
+            ejectItem.keyEquivalentModifierMask = .command
+            ejectItem.target = self
+            ejectItem.attributedTitle = MLText.build(
+                MLText.colored("Espelli disco", MLColor.info)
+            )
+            menu.addItem(ejectItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -1217,7 +1313,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Disk status — ROSSO: it's a problem, not a warning
+        // Disk status — clear visual indicator
         let diskItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         diskItem.attributedTitle = MLText.build(
             MLText.dot(MLColor.rosso),
@@ -1225,6 +1321,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         diskItem.isEnabled = false
         menu.addItem(diskItem)
+
+        let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        hintItem.attributedTitle = MLText.small("  Collega il disco per avviare il backup", MLColor.grigio)
+        hintItem.isEnabled = false
+        menu.addItem(hintItem)
     }
 
     private func addIdleSection(to menu: NSMenu) {
@@ -1278,24 +1379,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(durItem)
         }
 
-        // Disk info with semantic health colors
+        // Disk info with clear status
         refreshDiskDetailIfStale()
         if let detail = cachedDiskDetail {
             let diskItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            // Parse free space for color coding
             let freeColor: NSColor
             let fs = detail.freeSpace.lowercased()
             if fs.contains("tb") || (fs.contains("gb") && Double(fs.replacingOccurrences(of: "[^0-9.,]", with: "", options: .regularExpression).replacingOccurrences(of: ",", with: ".")) ?? 0 > 50) {
-                freeColor = MLColor.verde     // >50GB = healthy
+                freeColor = MLColor.verde
             } else if fs.contains("gb") {
-                freeColor = MLColor.warning   // <50GB = warning
+                freeColor = MLColor.warning
             } else {
-                freeColor = MLColor.rosso     // MB = critical
+                freeColor = MLColor.rosso
             }
             diskItem.attributedTitle = MLText.build(
-                MLText.small("  ", MLColor.grigio),
-                MLText.small(detail.volumeName, MLColor.info),
-                MLText.small("  \(detail.freeSpace) liberi", freeColor)
+                MLText.dot(MLColor.verde),
+                MLText.colored(detail.volumeName, MLColor.info),
+                MLText.plain("  "),
+                MLText.colored(detail.freeSpace + " liberi", freeColor)
             )
             diskItem.isEnabled = false
             menu.addItem(diskItem)
@@ -1764,6 +1865,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if FileManager.default.fileExists(atPath: volume.path) {
                 NSWorkspace.shared.open(volume)
             }
+        }
+    }
+
+    @objc private func ejectDisk() {
+        let dest = cachedConfig.destPath
+        guard dest.hasPrefix("/Volumes/") else { return }
+        let parts = dest.split(separator: "/", maxSplits: 3)
+        guard parts.count >= 2 else { return }
+        let volumeName = String(parts[1])
+        let volumePath = "/Volumes/\(volumeName)"
+
+        let doEject = { [weak self] in
+            Shell.runAsync("diskutil eject \"\(volumePath)\" 2>&1") { [weak self] output in
+                DispatchQueue.main.async {
+                    if output.lowercased().contains("ejected") || output.lowercased().contains("unmounted") {
+                        self?.sendNotification(title: "Disco espulso",
+                                               body: "\(volumeName) rimosso in sicurezza")
+                    } else {
+                        self?.sendNotification(title: "Errore espulsione",
+                                               body: "Impossibile espellere \(volumeName)")
+                    }
+                    self?.pollStatus()
+                }
+            }
+        }
+
+        // If backup is running, stop it first then eject
+        if currentStatus?.state == "running" {
+            sendNotification(title: "Arresto backup...",
+                             body: "Interrompo il backup per espellere \(volumeName)")
+            Shell.runAsync("rustyback stop 2>&1") { _ in
+                // Wait for backup to fully stop before ejecting
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    doEject()
+                }
+            }
+        } else {
+            doEject()
         }
     }
 

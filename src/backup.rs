@@ -250,6 +250,46 @@ fn format_rate(bytes_per_sec: u64) -> String {
     }
 }
 
+/// Check if a path is on an actually mounted volume (not a stale mountpoint).
+/// macOS sometimes leaves empty directories in /Volumes/ after unmount.
+/// We detect this by comparing the mount device of the path vs root (/).
+pub fn is_volume_mounted(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+
+    let path_str = path.to_string_lossy();
+    // Only check for /Volumes/ paths
+    if !path_str.starts_with("/Volumes/") {
+        return true;
+    }
+
+    let c_path = match CString::new(path_str.as_bytes()) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let c_root = match CString::new("/") {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    let mut stat_path: MaybeUninit<libc::statfs> = MaybeUninit::uninit();
+    let mut stat_root: MaybeUninit<libc::statfs> = MaybeUninit::uninit();
+
+    unsafe {
+        if libc::statfs(c_path.as_ptr(), stat_path.as_mut_ptr()) != 0 {
+            return false;
+        }
+        if libc::statfs(c_root.as_ptr(), stat_root.as_mut_ptr()) != 0 {
+            return false;
+        }
+        let sp = stat_path.assume_init();
+        let sr = stat_root.assume_init();
+        // If mount-from device matches root, this is a stale mountpoint
+        // Compare f_mntfromname (mount device) — stale mountpoints show root's device
+        sp.f_mntfromname[..32] != sr.f_mntfromname[..32]
+    }
+}
+
 pub fn run_backup(config: &Config) -> Result<BackupStats> {
     let sources = config.source.all_paths();
     let dest_base = &config.destination.path;
@@ -257,6 +297,15 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
 
     if sources.is_empty() {
         anyhow::bail!("No source paths configured");
+    }
+
+    // Verify the backup volume is actually mounted (not a stale mountpoint)
+    if !is_volume_mounted(dest_base) {
+        anyhow::bail!(
+            "Backup disk is not connected. \
+             Path {} exists but is a stale mountpoint (no volume mounted).",
+            dest_base.display()
+        );
     }
 
     // Adaptive I/O priority: THROTTLE on battery, UTILITY when plugged in
