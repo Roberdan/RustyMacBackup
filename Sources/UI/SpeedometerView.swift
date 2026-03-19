@@ -1,137 +1,125 @@
 import Cocoa
 
 class SpeedometerView: NSView {
-    var speed: Double = 0.0 { // MB/s
-        didSet {
-            targetNeedleAngle = angleForSpeed(speed)
-            animateNeedle()
-        }
-    }
+    var speed: Double = 0 { didSet { needsDisplay = true } }
+    var maxSpeed: Double = 200
     var eta: UInt64 = 0 { didSet { needsDisplay = true } }
-
-    private var currentNeedleAngle: CGFloat = 210 // Start at red (slow)
-    private var targetNeedleAngle: CGFloat = 210
-    private var displayLink: Timer?
-
-    private let startAngle: CGFloat = 210  // degrees, left side (slow/red)
-    private let endAngle: CGFloat = -30    // degrees, right side (fast/green)
-    private let maxSpeed: Double = 200     // MB/s for full scale
 
     override var intrinsicContentSize: NSSize { NSSize(width: 220, height: 90) }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        let center = NSPoint(x: bounds.width / 2, y: 10)
-        let radius = bounds.width / 2 - 20
+        let gaugeSize: CGFloat = 76
+        let centerX: CGFloat = gaugeSize / 2 + 14
+        let centerY: CGFloat = 20
+        let radius: CGFloat = gaugeSize / 2 - 4
 
-        let zoneSweep: CGFloat = (endAngle - startAngle) / 3 // -80° per zone
-        let redEnd = startAngle + zoneSweep
-        let goldEnd = redEnd + zoneSweep
+        let startAngle: CGFloat = 210 * .pi / 180
+        let endAngle: CGFloat = -30 * .pi / 180
+        let totalSweep: CGFloat = 240
 
-        // Arc background
-        let bgArc = NSBezierPath()
-        bgArc.lineWidth = 3
-        bgArc.appendArc(withCenter: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: true)
-        NSColor.quaternaryLabelColor.setStroke()
-        bgArc.stroke()
+        // Background arc
+        ctx.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.4).cgColor)
+        ctx.setLineWidth(5)
+        ctx.addArc(center: CGPoint(x: centerX, y: centerY), radius: radius,
+                   startAngle: startAngle, endAngle: endAngle, clockwise: true)
+        ctx.strokePath()
 
-        // Colored arc segments (red -> gold -> green)
-        let redArc = NSBezierPath()
-        redArc.lineWidth = 4
-        redArc.appendArc(withCenter: center, radius: radius, startAngle: startAngle, endAngle: redEnd, clockwise: true)
-        MLColor.rosso.setStroke()
-        redArc.stroke()
+        // Active arc — gold
+        let valuePct = min(speed / maxSpeed, 1.0)
+        let valueAngle = startAngle - CGFloat(valuePct * Double(totalSweep)) * .pi / 180
 
-        let goldArc = NSBezierPath()
-        goldArc.lineWidth = 4
-        goldArc.appendArc(withCenter: center, radius: radius, startAngle: redEnd, endAngle: goldEnd, clockwise: true)
-        MLColor.gold.setStroke()
-        goldArc.stroke()
-
-        let greenArc = NSBezierPath()
-        greenArc.lineWidth = 4
-        greenArc.appendArc(withCenter: center, radius: radius, startAngle: goldEnd, endAngle: endAngle, clockwise: true)
-        MLColor.verde.setStroke()
-        greenArc.stroke()
-
-        // Tick marks every 30°
-        for angle in stride(from: Int(startAngle), through: Int(endAngle), by: -30) {
-            let rad = CGFloat(angle) * .pi / 180
-            let outer = NSPoint(x: center.x + cos(rad) * radius, y: center.y + sin(rad) * radius)
-            let inner = NSPoint(x: center.x + cos(rad) * (radius - 7), y: center.y + sin(rad) * (radius - 7))
-            let tick = NSBezierPath()
-            tick.lineWidth = 1.5
-            tick.move(to: outer)
-            tick.line(to: inner)
-            NSColor.secondaryLabelColor.setStroke()
-            tick.stroke()
+        if valuePct > 0.01 {
+            ctx.setStrokeColor(MLColor.gold.cgColor)
+            ctx.setLineWidth(5)
+            ctx.addArc(center: CGPoint(x: centerX, y: centerY), radius: radius,
+                       startAngle: startAngle, endAngle: valueAngle, clockwise: true)
+            ctx.strokePath()
         }
 
-        // Needle color by zone
-        let ratioDenominator = endAngle - startAngle
-        let progress = ratioDenominator == 0 ? 0 : (currentNeedleAngle - startAngle) / ratioDenominator
-        let needleColor: NSColor
-        if progress < (1.0 / 3.0) {
-            needleColor = MLColor.rosso
-        } else if progress < (2.0 / 3.0) {
-            needleColor = MLColor.gold
-        } else {
-            needleColor = MLColor.verde
+        // Tick marks: 0, 50, 100, 150, 200
+        for i in 0...4 {
+            let tickPct = Double(i) / 4.0
+            let tickAngle = startAngle - CGFloat(tickPct * Double(totalSweep)) * .pi / 180
+            let inner = radius - 8
+            let outer = radius + 1
+            ctx.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+            ctx.setLineWidth(1)
+            ctx.move(to: CGPoint(x: centerX + cos(tickAngle) * inner,
+                                  y: centerY + sin(tickAngle) * inner))
+            ctx.addLine(to: CGPoint(x: centerX + cos(tickAngle) * outer,
+                                     y: centerY + sin(tickAngle) * outer))
+            ctx.strokePath()
+
+            let label = "\(i * 50)"
+            let labelAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 7, weight: .medium),
+                .foregroundColor: NSColor.tertiaryLabelColor
+            ]
+            let labelSize = (label as NSString).size(withAttributes: labelAttrs)
+            let labelR = radius + 8
+            let lx = centerX + cos(tickAngle) * labelR - labelSize.width / 2
+            let ly = centerY + sin(tickAngle) * labelR - labelSize.height / 2
+            (label as NSString).draw(at: CGPoint(x: lx, y: ly), withAttributes: labelAttrs)
         }
 
-        // Needle
-        let needleRad = currentNeedleAngle * .pi / 180
-        let needleEnd = NSPoint(x: center.x + cos(needleRad) * (radius - 2), y: center.y + sin(needleRad) * (radius - 2))
-        let needle = NSBezierPath()
-        needle.lineWidth = 2
-        needle.move(to: center)
-        needle.line(to: needleEnd)
-        needleColor.setStroke()
-        needle.stroke()
+        // Needle — rosso corsa
+        let needleLen = radius - 14
+        let nx = centerX + cos(valueAngle) * needleLen
+        let ny = centerY + sin(valueAngle) * needleLen
+        ctx.setStrokeColor(CGColor(red: 0.86, green: 0, blue: 0, alpha: 1))
+        ctx.setLineWidth(2)
+        ctx.move(to: CGPoint(x: centerX, y: centerY))
+        ctx.addLine(to: CGPoint(x: nx, y: ny))
+        ctx.strokePath()
 
-        let hub = NSBezierPath(ovalIn: NSRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6))
-        needleColor.setFill()
-        hub.fill()
+        // Center hub
+        ctx.setFillColor(CGColor(red: 0.86, green: 0, blue: 0, alpha: 1))
+        ctx.fillEllipse(in: CGRect(x: centerX - 3, y: centerY - 3, width: 6, height: 6))
 
-        // Labels
-        let speedString = String(format: "%.1f MB/s", speed)
+        // Speed value — bold center
+        let speedStr = String(format: "%.0f", speed)
         let speedAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 16),
             .foregroundColor: NSColor.labelColor
         ]
-        let speedSize = (speedString as NSString).size(withAttributes: speedAttrs)
-        let speedPoint = NSPoint(x: bounds.midX - speedSize.width / 2, y: 24)
-        (speedString as NSString).draw(at: speedPoint, withAttributes: speedAttrs)
+        let speedSize = (speedStr as NSString).size(withAttributes: speedAttrs)
+        (speedStr as NSString).draw(
+            at: CGPoint(x: centerX - speedSize.width / 2, y: centerY - speedSize.height / 2 - 5),
+            withAttributes: speedAttrs)
 
-        let etaString = "ETA: \(eta)s"
-        let etaAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11),
+        // "MB/s" unit
+        let unitAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 7, weight: .medium),
             .foregroundColor: NSColor.secondaryLabelColor
         ]
-        let etaSize = (etaString as NSString).size(withAttributes: etaAttrs)
-        let etaPoint = NSPoint(x: bounds.midX - etaSize.width / 2, y: 9)
-        (etaString as NSString).draw(at: etaPoint, withAttributes: etaAttrs)
-    }
+        let unitSize = ("MB/s" as NSString).size(withAttributes: unitAttrs)
+        ("MB/s" as NSString).draw(
+            at: CGPoint(x: centerX - unitSize.width / 2, y: centerY - speedSize.height / 2 - 16),
+            withAttributes: unitAttrs)
 
-    private func angleForSpeed(_ speed: Double) -> CGFloat {
-        let clamped = min(max(speed, 0), maxSpeed)
-        let ratio = CGFloat(clamped / maxSpeed)
-        return startAngle + (endAngle - startAngle) * ratio
-    }
-
-    private func animateNeedle() {
-        displayLink?.invalidate()
-        displayLink = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-            let diff = self.targetNeedleAngle - self.currentNeedleAngle
-            if abs(diff) < 0.5 {
-                self.currentNeedleAngle = self.targetNeedleAngle
-                timer.invalidate()
-            } else {
-                self.currentNeedleAngle += diff * 0.15
-            }
-            self.needsDisplay = true
+        // ETA to the right of gauge
+        let rightX: CGFloat = gaugeSize + 24
+        if eta > 0 {
+            let etaStr = Fmt.formatDuration(Double(eta))
+            let labelAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            let valueAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: 13),
+                .foregroundColor: MLColor.gold
+            ]
+            ("finisce tra" as NSString).draw(at: CGPoint(x: rightX, y: 50), withAttributes: labelAttrs)
+            (etaStr as NSString).draw(at: CGPoint(x: rightX, y: 30), withAttributes: valueAttrs)
+        } else {
+            let scanAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            ("scansione..." as NSString).draw(at: CGPoint(x: rightX, y: 40), withAttributes: scanAttrs)
         }
     }
 }

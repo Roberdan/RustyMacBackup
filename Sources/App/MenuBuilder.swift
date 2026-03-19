@@ -169,44 +169,75 @@ class MenuBuilder {
 
     private func buildRunningMenu(menu: NSMenu, status: BackupStatusFile?) {
         let hdr = NSMenuItem()
-        let t = NSMutableAttributedString(attributedString: MLText.dot(color: MLColor.gold))
-        t.append(MLText.bold("RustyMacBackup"))
-        t.append(MLText.colored("  BACKUP IN CORSO", color: MLColor.gold))
+        let t = NSMutableAttributedString()
+        t.append(MLText.colored("RustyMacBackup", color: MLColor.gold))
+        t.append(MLText.small("  BACKUP IN CORSO", color: MLColor.verde))
         hdr.attributedTitle = t
+        hdr.isEnabled = false
         menu.addItem(hdr)
         menu.addItem(.separator())
 
         let progressItem = NSMenuItem()
         let progressBar = ProgressBarView()
         progressBar.frame = NSRect(x: 0, y: 0, width: 250, height: 32)
-        if let s = status { progressBar.progress = CGFloat(s.filesDone) / max(CGFloat(s.filesTotal), 1) }
+        if let s = status, s.filesTotal > 0 {
+            progressBar.progress = CGFloat(s.filesDone) / CGFloat(s.filesTotal)
+        }
         progressItem.view = progressBar
         menu.addItem(progressItem)
 
         if let s = status {
-            let statsItem = NSMenuItem()
-            statsItem.attributedTitle = MLText.small(
-                "  \(Fmt.formatBytes(s.bytesCopied)) copiati  \(Fmt.formatFileCount(s.filesDone)) / \(Fmt.formatFileCount(s.filesTotal)) file")
-            menu.addItem(statsItem)
+            let filesItem = NSMenuItem()
+            let ft = NSMutableAttributedString()
+            ft.append(MLText.colored("  \(Fmt.formatBytes(s.bytesCopied))", color: MLColor.gold))
+            ft.append(MLText.plain(" copiati  "))
+            ft.append(MLText.small("\(Fmt.formatFileCount(s.filesDone)) / \(Fmt.formatFileCount(s.filesTotal)) file",
+                                    color: MLColor.grigio))
+            filesItem.attributedTitle = ft
+            filesItem.isEnabled = false
+            menu.addItem(filesItem)
         }
 
         let speedItem = NSMenuItem()
         let speedo = SpeedometerView()
         speedo.frame = NSRect(x: 0, y: 0, width: 220, height: 90)
-        if let s = status { speedo.speed = Double(s.bytesPerSec) / 1_048_576.0; speedo.eta = s.etaSecs }
+        if let s = status {
+            speedo.speed = Double(s.bytesPerSec) / 1_048_576.0
+            speedo.eta = s.etaSecs
+        }
         speedItem.view = speedo
         menu.addItem(speedItem)
 
-        if let s = status {
-            let mbps = String(format: "%.1f MB/s", Double(s.bytesPerSec) / 1_048_576.0)
-            let eta = s.etaSecs > 0 ? "  ETA: \(Fmt.formatDuration(Double(s.etaSecs)))" : ""
-            menu.addItem(smallItem("  Speed: \(mbps)\(eta)"))
-            if !s.currentFile.isEmpty { menu.addItem(smallItem("  ▸ \(MLText.cleanPath(s.currentFile))")) }
+        if let s = status, !s.currentFile.isEmpty {
+            let clean = MLText.cleanPath(s.currentFile)
+            let fileItem = NSMenuItem()
+            fileItem.attributedTitle = MLText.small("  ▸ \(clean)", color: MLColor.grigio)
+            fileItem.isEnabled = false
+            menu.addItem(fileItem)
+        }
+
+        if let s = status, s.errors > 0 {
+            let errItem = NSMenuItem()
+            let et = NSMutableAttributedString()
+            et.append(MLText.small("  \(s.errors) file protetti ignorati", color: MLColor.warning))
+            et.append(MLText.small(" (normale)", color: MLColor.grigio))
+            errItem.attributedTitle = et
+            errItem.isEnabled = false
+            menu.addItem(errItem)
         }
 
         menu.addItem(.separator())
-        menu.addItem(coloredAction("● Ferma backup", color: MLColor.gold,
-                                   action: #selector(AppDelegate.stopBackup), key: "b"))
+
+        let stopItem = NSMenuItem()
+        let st = NSMutableAttributedString()
+        st.append(MLText.dot(color: MLColor.gold))
+        st.append(MLText.colored("Ferma backup", color: MLColor.gold))
+        stopItem.attributedTitle = st
+        stopItem.action = #selector(AppDelegate.stopBackup)
+        stopItem.target = delegate
+        stopItem.keyEquivalent = "b"
+        stopItem.keyEquivalentModifierMask = .command
+        menu.addItem(stopItem)
     }
 
     // MARK: - Error
