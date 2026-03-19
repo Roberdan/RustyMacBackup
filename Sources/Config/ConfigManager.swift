@@ -250,6 +250,11 @@ func generateDefaultConfig(homePath: String, backupPath: String) -> String {
         // iCloud-managed containers (touching these crashes tccd → bird mass-eviction)
         "Library/Containers", "Library/Group Containers",
         "Library/Daemon Containers",
+        // System-managed ML/analytics (regenerable, daemon-managed)
+        "Library/Metadata", "Library/Biome",
+        "Library/DuetExpertCenter", "Library/IntelligencePlatform",
+        "Library/Trial", "Library/PersonalizationPortrait",
+        "Library/StatusKit", "Library/Suggestions",
         // Cloud-synced (already backed up by Apple/cloud providers)
         "Library/CloudStorage", "Library/Mobile Documents",
         "Library/Application Support/CloudDocs",
