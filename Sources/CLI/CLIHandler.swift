@@ -128,7 +128,7 @@ enum CLIHandler {
 
     private static func runStop(configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
-        let lockURL = URL(fileURLWithPath: cfg.destination.path).appendingPathComponent("rustyback.lock")
+        let lockURL = URL(fileURLWithPath: cfg.destination.path).appendingPathComponent("rustymacbackup.lock")
         let fm = FileManager.default
 
         guard fm.fileExists(atPath: lockURL.path) else {

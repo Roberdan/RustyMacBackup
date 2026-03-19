@@ -8,7 +8,7 @@ enum SpaceLevel {
 
 enum DiskDiagnostics {
     static func preflightWriteTest(at url: URL) -> Bool {
-        let probe = url.appendingPathComponent(".rustyback-probe-\(ProcessInfo.processInfo.processIdentifier)")
+        let probe = url.appendingPathComponent(".rustymacbackup-probe-\(ProcessInfo.processInfo.processIdentifier)")
         do {
             try "probe".write(to: probe, atomically: true, encoding: .utf8)
             try FileManager.default.removeItem(at: probe)

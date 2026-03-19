@@ -42,12 +42,12 @@ chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 # Copy Info.plist
 cp Sources/App/Info.plist "$APP_BUNDLE/Contents/"
 
-# Copy icons if they exist
-if [ -d "menubar/icons" ]; then
-    cp menubar/icons/*.png "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
+# Copy icons
+if [ -d "Resources/icons" ]; then
+    cp Resources/icons/*.png "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
 fi
-if [ -f "menubar/AppIcon.icns" ]; then
-    cp menubar/AppIcon.icns "$APP_BUNDLE/Contents/Resources/"
+if [ -f "Resources/AppIcon.icns" ]; then
+    cp Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/"
 fi
 
 echo "  ✅ Bundle created: $APP_BUNDLE"

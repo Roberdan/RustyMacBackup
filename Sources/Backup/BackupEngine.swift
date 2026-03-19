@@ -59,7 +59,7 @@ enum BackupEngine {
         try FileManager.default.createDirectory(at: inProgressURL, withIntermediateDirectories: true)
 
         // 9. Acquire lock file
-        let lockPath = destURL.appendingPathComponent("rustyback.lock").path
+        let lockPath = destURL.appendingPathComponent("rustymacbackup.lock").path
         try acquireLock(at: lockPath)
         defer { try? FileManager.default.removeItem(atPath: lockPath) }
 

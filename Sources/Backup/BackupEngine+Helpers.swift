@@ -11,7 +11,7 @@ extension BackupEngine {
     }
 
     static func preflightWriteTest(at destURL: URL) -> Bool {
-        let testURL = destURL.appendingPathComponent(".rustyback-write-test-\(Int.random(in: 0...999_999))")
+        let testURL = destURL.appendingPathComponent(".rustymacbackup-write-test-\(Int.random(in: 0...999_999))")
         do {
             try "test".write(to: testURL, atomically: true, encoding: .utf8)
             try FileManager.default.removeItem(at: testURL)
