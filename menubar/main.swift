@@ -1164,6 +1164,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 MLText.colored("RustyMacBackup", MLColor.gold),
                 MLText.small("  BACKUP IN CORSO", MLColor.verde)
             )
+        } else if currentStatus?.state == "error" && isDiskConnected {
+            header.attributedTitle = MLText.build(
+                MLText.colored("RustyMacBackup", MLColor.rosso),
+                MLText.small("  ERRORE", MLColor.rosso)
+            )
         } else if isDiskConnected {
             header.attributedTitle = MLText.build(
                 MLText.colored("RustyMacBackup", MLColor.verde)
@@ -1181,6 +1186,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             addRunningSection(to: menu, status: status)
         } else if !isDiskConnected {
             addDiskAbsentSection(to: menu)
+        } else if currentStatus?.state == "error" && isDiskConnected {
+            addErrorSection(to: menu)
         } else {
             addIdleSection(to: menu)
         }
@@ -1438,6 +1445,97 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             errItem.isEnabled = false
             menu.addItem(errItem)
         }
+    }
+
+    private func addErrorSection(to menu: NSMenu) {
+        // Show last successful backup if available
+        if let status = currentStatus,
+           let lastStr = status.last_completed,
+           let lastDate = Fmt.parseISO(lastStr) {
+            let timeStr = Fmt.relativeTime(from: lastDate)
+            let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            lastItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.grigio),
+                MLText.plain("Ultimo backup OK: "),
+                MLText.colored(timeStr, MLColor.grigio)
+            )
+            lastItem.isEnabled = false
+            menu.addItem(lastItem)
+        }
+
+        // Error indicator
+        let errorItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        errorItem.attributedTitle = MLText.build(
+            MLText.dot(MLColor.rosso),
+            MLText.colored("Backup fallito", MLColor.rosso)
+        )
+        errorItem.isEnabled = false
+        menu.addItem(errorItem)
+
+        // Read error log for details
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+        let errorLogPath = "\(home)/.local/share/rusty-mac-backup/backup-error.log"
+        let errorText = (try? String(contentsOfFile: errorLogPath, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if errorText.lowercased().contains("full disk access") {
+            let fdaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            fdaItem.attributedTitle = MLText.build(
+                MLText.small("  ⚠ Serve Full Disk Access per rustyback", MLColor.rosso)
+            )
+            fdaItem.isEnabled = false
+            menu.addItem(fdaItem)
+
+            let fixItem = NSMenuItem(title: "Apri Impostazioni Privacy...", action: #selector(openFDASettings), keyEquivalent: "")
+            fixItem.target = self
+            menu.addItem(fixItem)
+        } else if errorText.lowercased().contains("not permitted") || errorText.lowercased().contains("permission denied") {
+            let permItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            permItem.attributedTitle = MLText.build(
+                MLText.small("  ⚠ Permessi disco non corretti", MLColor.rosso)
+            )
+            permItem.isEnabled = false
+            menu.addItem(permItem)
+
+            let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            hintItem.attributedTitle = MLText.build(
+                MLText.small("  Finder → tasto destro sul disco → Informazioni", MLColor.grigio)
+            )
+            hintItem.isEnabled = false
+            menu.addItem(hintItem)
+        } else if !errorText.isEmpty {
+            // Show first meaningful line of error
+            let errorLine = errorText.components(separatedBy: .newlines)
+                .first(where: { $0.lowercased().contains("error") }) ?? String(errorText.suffix(100))
+            let detailItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            detailItem.attributedTitle = MLText.build(
+                MLText.small("  \(String(errorLine.prefix(80)))", MLColor.grigio)
+            )
+            detailItem.isEnabled = false
+            menu.addItem(detailItem)
+        }
+
+        // Disk info (still show it)
+        refreshDiskDetailIfStale()
+        if let detail = cachedDiskDetail {
+            let diskItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            diskItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.verde),
+                MLText.colored(detail.volumeName, MLColor.info),
+                MLText.plain("  "),
+                MLText.colored(detail.freeSpace + " liberi", MLColor.verde)
+            )
+            diskItem.isEnabled = false
+            menu.addItem(diskItem)
+        }
+
+        // Hint to retry
+        let retryHint = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        retryHint.attributedTitle = MLText.build(
+            MLText.small("  Premi Backup Now per riprovare", MLColor.grigio)
+        )
+        retryHint.isEnabled = false
+        menu.addItem(retryHint)
     }
 
     private func addRunningSection(to menu: NSMenu, status: BackupStatus) {

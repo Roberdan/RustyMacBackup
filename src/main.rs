@@ -682,9 +682,11 @@ fn cmd_stop() -> Result<()> {
 
 fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
     let config = load_config(config_path)?;
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let is_interactive = atty::is(atty::Stream::Stdout);
 
     // Check if running on battery — skip if scheduled (non-interactive)
-    if is_on_battery() && !atty::is(atty::Stream::Stdout) {
+    if is_on_battery() && !is_interactive {
         eprintln!("🔋 On battery power — skipping scheduled backup.");
         return Ok(());
     }
@@ -708,7 +710,7 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .unwrap_or_else(|| config.destination.path.display().to_string());
 
-        if atty::is(atty::Stream::Stdout) {
+        if is_interactive {
             anyhow::bail!(
                 "💾 Backup disk \"{}\" is not connected.\n   \
                  Connect the disk and try again.",
@@ -718,6 +720,45 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
             // Scheduled run — just exit silently
             eprintln!("💾 Backup disk \"{}\" not connected — skipping.", vol_name);
             return Ok(());
+        }
+    }
+
+    // Check Full Disk Access — the binary itself needs FDA for scheduled backups
+    if !backup::check_full_disk_access() {
+        let binary_path = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| format!("{}/.local/bin/rustyback", home));
+
+        if is_interactive {
+            eprintln!(
+                "\n{} {} Full Disk Access is required to back up your data.\n",
+                "⚠".yellow().bold(),
+                "rustyback".bold()
+            );
+            eprintln!("  How to fix:");
+            eprintln!(
+                "  1. Open {} → {} → {}",
+                "System Settings".bold(),
+                "Privacy & Security".bold(),
+                "Full Disk Access".bold()
+            );
+            eprintln!("  2. Click {} and add:", "+".bold());
+            eprintln!("     {}", binary_path.dimmed());
+            eprintln!("  3. Also add your {} app if not already listed", "Terminal".bold());
+            eprintln!("  4. Re-run {}", "rustyback backup".cyan());
+            eprintln!();
+            anyhow::bail!("Full Disk Access required — backup would be incomplete without it.");
+        } else {
+            // Scheduled run via LaunchAgent — write clear error for menu bar
+            backup::write_error_status();
+            eprintln!("❌ Full Disk Access required for rustyback.");
+            eprintln!("   Add to System Settings → Privacy & Security → Full Disk Access:");
+            eprintln!("   {}", binary_path);
+            // Return error so LaunchAgent logs it clearly
+            anyhow::bail!(
+                "Full Disk Access required. Add {} to System Settings → Privacy & Security → Full Disk Access.",
+                binary_path
+            );
         }
     }
 
@@ -753,6 +794,36 @@ fn cmd_backup(config_path: &Option<PathBuf>) -> Result<()> {
                 return Ok(());
             }
             backup::write_error_status();
+
+            // Provide actionable guidance based on the error type
+            if msg.contains("Operation not permitted") {
+                eprintln!("\n{}", "❌ Operation not permitted".red().bold());
+                eprintln!();
+                eprintln!("  This is a macOS security restriction. Likely causes:");
+                eprintln!();
+                eprintln!("  1. {} — the backup disk has restricted permissions", "Disk permissions".bold());
+                eprintln!("     → Open Finder → right-click disk → Get Info");
+                eprintln!("     → Under \"Sharing & Permissions\", check \"Ignore ownership\"");
+                eprintln!();
+                eprintln!("  2. {} — rustyback can't read protected folders", "Full Disk Access".bold());
+                eprintln!("     → System Settings → Privacy & Security → Full Disk Access");
+                eprintln!("     → Add: {}", format!("{}/.local/bin/rustyback", home).dimmed());
+                eprintln!();
+                eprintln!("  Context: {}", msg.dimmed());
+                return Err(e);
+            }
+
+            if msg.contains("Permission denied") {
+                eprintln!("\n{}", "❌ Permission denied".red().bold());
+                eprintln!();
+                eprintln!("  The backup disk doesn't allow writing.");
+                eprintln!("  → Open Finder → right-click disk → Get Info");
+                eprintln!("  → Set your user to \"Read & Write\" under Sharing & Permissions");
+                eprintln!();
+                eprintln!("  Context: {}", msg.dimmed());
+                return Err(e);
+            }
+
             return Err(e);
         }
     };

@@ -158,8 +158,16 @@ pub fn write_error_status() {
     let prev = read_previous_status();
     write_status(&BackupStatusFile {
         state: "error".to_string(),
+        started_at: Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        last_completed: prev.last_completed,
+        last_duration_secs: 0.0,
+        files_total: 0,
+        files_done: 0,
+        bytes_copied: 0,
+        bytes_per_sec: 0,
+        eta_secs: 0,
         errors: prev.errors + 1,
-        ..prev
+        current_file: String::new(),
     });
 }
 
@@ -298,6 +306,61 @@ pub fn is_volume_mounted(path: &Path) -> bool {
     }
 }
 
+/// Quick write test on the destination to catch permission issues early.
+/// Creates and removes a temp file — fails fast with a clear error if the disk
+/// isn't writable instead of dying mid-backup with a cryptic EPERM.
+fn preflight_write_test(dest_base: &Path) -> Result<()> {
+    let probe = dest_base.join(".rmb-probe");
+    fs::write(&probe, b"ok").map_err(|e| {
+        let _ = fs::remove_file(&probe);
+        let hint = if e.raw_os_error() == Some(1) {
+            // EPERM — macOS security restriction
+            format!(
+                "\nThe backup disk refused write access (Operation not permitted).\n\
+                 This is a macOS security restriction on \"{}\".\n\n\
+                 How to fix:\n\
+                 1. Open Finder → right-click the disk → Get Info\n\
+                 2. Under \"Sharing & Permissions\", make sure your user has Read & Write\n\
+                 3. If \"Ignore ownership\" is unchecked, check it\n\
+                 4. Or re-run: rustyback init",
+                dest_base.display()
+            )
+        } else if e.raw_os_error() == Some(13) {
+            // EACCES — standard permission denied
+            format!(
+                "\nPermission denied writing to \"{}\".\n\n\
+                 How to fix:\n\
+                 1. Open Finder → right-click the backup disk → Get Info\n\
+                 2. Under \"Sharing & Permissions\", set your user to Read & Write\n\
+                 3. Or run: sudo chmod 777 \"{}\"",
+                dest_base.display(),
+                dest_base.display()
+            )
+        } else if e.raw_os_error() == Some(30) {
+            // EROFS — read-only filesystem
+            format!(
+                "\nBackup disk is mounted read-only.\n\
+                 Eject and reconnect the disk, or check Disk Utility for errors."
+            )
+        } else {
+            format!("\nCannot write to backup disk: {}", e)
+        };
+        anyhow::anyhow!("Backup disk is not writable: {}{}", dest_base.display(), hint)
+    })?;
+    let _ = fs::remove_file(&probe);
+    Ok(())
+}
+
+/// Check Full Disk Access by probing TCC-protected directories.
+/// Returns true if the current process can read protected paths.
+pub fn check_full_disk_access() -> bool {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    // These paths are TCC-protected — reading them requires FDA
+    std::fs::read_dir(format!("{}/Library/Mail", home)).is_ok()
+        || std::fs::read_dir(format!("{}/Library/Messages", home)).is_ok()
+        || std::fs::metadata(format!("{}/Library/Safari", home)).is_ok()
+}
+
 pub fn run_backup(config: &Config) -> Result<BackupStats> {
     let sources = config.source.all_paths();
     let dest_base = &config.destination.path;
@@ -320,10 +383,15 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     set_io_priority();
 
     // Ensure destination exists
-    fs::create_dir_all(dest_base)?;
+    fs::create_dir_all(dest_base)
+        .context(format!("Cannot create backup directory: {}", dest_base.display()))?;
+
+    // Pre-flight write test — catch permission issues before starting
+    preflight_write_test(dest_base)?;
 
     // Clean up stale .in-progress dirs from previous failed runs
-    cleanup_stale_in_progress(dest_base)?;
+    cleanup_stale_in_progress(dest_base)
+        .context(format!("Cannot read backup directory: {}", dest_base.display()))?;
 
     // Check disk space before starting
     let free_space = check_disk_space(dest_base)?;
@@ -356,14 +424,16 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     }
 
     // Find latest existing backup for hard-linking
-    let latest = find_latest_backup(dest_base)?;
+    let latest = find_latest_backup(dest_base)
+        .context("Cannot list existing backups")?;
 
     // Create new backup dir as .in-progress
     let timestamp = Local::now().format("%Y-%m-%d_%H%M%S").to_string();
     let in_progress = dest_base.join(format!("in-progress-{}", timestamp));
     let final_path = dest_base.join(&timestamp);
 
-    fs::create_dir_all(&in_progress)?;
+    fs::create_dir_all(&in_progress)
+        .context(format!("Cannot create in-progress directory: {}", in_progress.display()))?;
 
     // Write lock file (clean up stale locks from crashed backups)
     let lock_path = dest_base.join("rustyback.lock");
@@ -402,7 +472,8 @@ pub fn run_backup(config: &Config) -> Result<BackupStats> {
     fs::write(
         &lock_path,
         format!("pid:{}\nstarted:{}\n", std::process::id(), timestamp),
-    )?;
+    )
+    .context(format!("Cannot write lock file: {}", lock_path.display()))?;
 
     let start_time = Instant::now();
     let started_at = Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
