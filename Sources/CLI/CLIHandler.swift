@@ -110,17 +110,20 @@ enum CLIHandler {
         }
 
         let sem = DispatchSemaphore(value: 0)
-        var backupError: Error?
+        final class ErrorBox: @unchecked Sendable {
+            var error: Error?
+        }
+        let box = ErrorBox()
         Task {
             do {
                 try await BackupEngine.run(config: cfg)
             } catch {
-                backupError = error
+                box.error = error
             }
             sem.signal()
         }
         sem.wait()
-        if let backupError { throw backupError }
+        if let err = box.error { throw err }
     }
 
     private static func runStop(configPath: String?) throws {
