@@ -46,6 +46,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pollTimer?.tolerance = 0.5
         pollStatus()
 
+        // On first launch or if FDA missing, open Privacy settings so user sees the app
+        let fda = FDACheck.checkFullDiskAccess()
+        if !fda.hasAccess {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                FDACheck.openFDASettings()
+            }
+        }
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.checkForUpdates()
         }
