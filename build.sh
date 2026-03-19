@@ -51,7 +51,18 @@ if [ -f "Resources/AppIcon.icns" ]; then
 fi
 
 echo "  ✅ Bundle created: $APP_BUNDLE"
+
+# Ad-hoc code sign with consistent identifier
+# This ensures macOS FDA permission persists across updates
+echo "  Signing..."
+codesign --force --deep --sign - \
+    --identifier "com.roberdan.rusty-mac-backup" \
+    "$APP_BUNDLE" 2>/dev/null || true
+echo "  ✅ Signed (com.roberdan.rusty-mac-backup)"
+
 echo ""
 echo "🎉 Build complete!"
 echo "   App: $APP_BUNDLE"
 echo "   CLI: $BINARY version → $($BINARY version 2>/dev/null || echo 'N/A')"
+echo ""
+echo "   Install: ./install.sh"

@@ -4,7 +4,7 @@ import UserNotifications
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     var config: Config?
-    private var statusManager = StatusManager()
+    var statusManager = StatusManager()
     private var iconManager: IconManager!
     private var pollTimer: Timer?
     private var liveUpdateTimer: Timer?
@@ -47,10 +47,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ws.notificationCenter.addObserver(self, selector: #selector(volumeDidUnmount(_:)),
                                           name: NSWorkspace.didUnmountNotification, object: nil)
 
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             self?.pollStatus()
         }
-        pollTimer?.tolerance = 0.5
+        pollTimer?.tolerance = 2.0
         pollStatus()
 
         // On first launch or if FDA missing, open Privacy settings so user sees the app
@@ -269,6 +269,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func openFDASettings() {
         FDACheck.openFDASettings()
+        // Reset cached FDA so next poll re-checks after user grants access
+        statusManager.resetFDACache()
     }
 
     // MARK: - First-Run Setup (from menu bar — no terminal needed)

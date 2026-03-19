@@ -75,14 +75,13 @@ class MenuBuilder {
 
         menu.addItem(.separator())
 
-        // FDA check info
-        let fda = FDACheck.checkFullDiskAccess()
-        if fda.hasAccess {
-            menu.addItem(coloredBullet("Full Disk Access: OK", color: MLColor.verde))
-        } else {
+        // FDA status (use cached state, don't re-check)
+        if delegate?.statusManager.currentState == .fdaMissing {
             menu.addItem(coloredBullet("Full Disk Access: mancante", color: MLColor.warning))
             let fdaItem = plainAction("  Apri Impostazioni Privacy...", action: #selector(AppDelegate.openFDASettings), key: "")
             menu.addItem(fdaItem)
+        } else {
+            menu.addItem(coloredBullet("Full Disk Access: OK", color: MLColor.verde))
         }
 
         menu.addItem(.separator())
@@ -262,8 +261,8 @@ class MenuBuilder {
         menu.addItem(.separator())
         menu.addItem(coloredBullet("Backup fallito", color: MLColor.rosso))
 
-        let fda = FDACheck.checkFullDiskAccess()
-        if !fda.hasAccess {
+        // FDA status from cached state (don't re-check, it crashes tccd)
+        if delegate?.statusManager.currentState == .fdaMissing {
             let fdaItem = NSMenuItem()
             fdaItem.attributedTitle = MLText.colored("  ⚠ Serve Full Disk Access", color: MLColor.rosso)
             menu.addItem(fdaItem)

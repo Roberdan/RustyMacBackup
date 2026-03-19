@@ -247,10 +247,12 @@ func generateDefaultConfig(homePath: String, backupPath: String) -> String {
         "Library/Caches", "Library/Logs", "Library/Application Support/Caches",
         "Library/Saved Application State", "Library/Containers/*/Data/Library/Caches",
         "Library/Updates", "Library/Developer",
+        // iCloud-managed containers (touching these crashes tccd → bird mass-eviction)
+        "Library/Containers", "Library/Group Containers",
+        "Library/Daemon Containers",
         // Cloud-synced (already backed up by Apple/cloud providers)
         "Library/CloudStorage", "Library/Mobile Documents",
         "Library/Application Support/CloudDocs",
-        "Library/Group Containers/*.Office",
         "OneDrive*", "Dropbox", "Google Drive", "iCloud Drive*",
         // Photos & Music (synced via iCloud/Apple)
         "Pictures/Photos Library.photoslibrary",

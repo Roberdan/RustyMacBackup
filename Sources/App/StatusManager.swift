@@ -14,6 +14,13 @@ class StatusManager {
     var currentState: AppState = .idle
     var lastStatus: BackupStatusFile?
     private let statusWriter = StatusWriter()
+    private var fdaChecked = false
+    private var fdaOK = false
+
+    /// Reset cached FDA result (call after user grants FDA)
+    func resetFDACache() {
+        fdaChecked = false
+    }
 
     /// Poll status.json and determine current app state.
     func poll(config: Config?) -> AppState {
@@ -25,8 +32,13 @@ class StatusManager {
 
         lastStatus = statusWriter.read()
 
-        let fda = FDACheck.checkFullDiskAccess()
-        if !fda.hasAccess {
+        // FDA check only once, then cache result (repeated checks crash tccd)
+        if !fdaChecked {
+            let fda = FDACheck.checkFullDiskAccess()
+            fdaOK = fda.hasAccess
+            fdaChecked = true
+        }
+        if !fdaOK {
             currentState = .fdaMissing
             return currentState
         }
