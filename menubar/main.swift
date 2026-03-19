@@ -445,6 +445,7 @@ enum Shell {
     private static let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
     private static let pathPrefix = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin"
     private static let rustybackPath = "\(home)/.local/bin/rustyback"
+    static let rustybackDisplayPath = "~/.local/bin/rustyback"
 
     @discardableResult
     static func run(_ command: String) -> String {
@@ -787,6 +788,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedDiskDetail: DiskDetail?
     private var diskDetailLastChecked: Date = .distantPast
     private var isEjecting: Bool = false
+    private var diskWriteError: String? = nil
 
     private var isDiskConnected: Bool {
         let dest = cachedConfig.destPath
@@ -842,6 +844,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func volumeDidMount(_ notification: Notification) {
         // Immediate disk detection on mount (no 30s wait)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.runDiskDiagnostics()
             self?.pollStatus()
         }
     }
@@ -851,6 +854,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.isEjecting = false
+            self.diskWriteError = nil
             self.wasDiskConnected = false
             self.cachedDiskDetail = nil
             self.stopAnimation()
@@ -860,6 +864,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 last_duration_secs: nil, files_total: nil, files_done: nil,
                 bytes_copied: nil, bytes_per_sec: nil, eta_secs: nil,
                 errors: nil, current_file: nil)), hasError: false)
+        }
+    }
+
+    /// Proactive diagnostics when disk connects — test writability, detect permission issues
+    private func runDiskDiagnostics() {
+        let dest = cachedConfig.destPath
+        guard !dest.isEmpty, isDiskConnected else {
+            diskWriteError = nil
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            // Test 1: can we write to the backup dir?
+            let probePath = "\(dest)/.rmb-probe"
+            do {
+                try "ok".write(toFile: probePath, atomically: true, encoding: .utf8)
+                try FileManager.default.removeItem(atPath: probePath)
+                DispatchQueue.main.async {
+                    self?.diskWriteError = nil
+                    self?.buildMenu()
+                }
+            } catch {
+                let code = (error as NSError).code
+                let msg: String
+                if code == 1 { // EPERM
+                    msg = "Permessi disco: Operation not permitted.\nFinder → tasto destro → Informazioni → attiva \"Ignora proprietà\""
+                } else if code == 13 { // EACCES
+                    msg = "Permessi disco: accesso negato.\nFinder → tasto destro → Informazioni → imposta Lettura e Scrittura"
+                } else if code == 30 { // EROFS
+                    msg = "Disco montato in sola lettura.\nEspelli e ricollega il disco."
+                } else {
+                    msg = "Errore scrittura disco: \(error.localizedDescription)"
+                }
+                DispatchQueue.main.async {
+                    self?.diskWriteError = msg
+                    self?.buildMenu()
+                }
+            }
         }
     }
 
@@ -1135,18 +1177,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let fdaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             fdaItem.attributedTitle = MLText.build(
                 MLText.dot(MLColor.rosso),
-                MLText.colored("Full Disk Access Required", MLColor.rosso)
+                MLText.colored("Full Disk Access richiesto", MLColor.rosso)
             )
             fdaItem.isEnabled = false
             menu.addItem(fdaItem)
 
-            let fixItem = NSMenuItem(title: "Open Privacy Settings...", action: #selector(openFDASettings), keyEquivalent: "")
+            let hint1 = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            hint1.attributedTitle = MLText.small("  Senza FDA il backup non può accedere ai tuoi file", MLColor.grigio)
+            hint1.isEnabled = false
+            menu.addItem(hint1)
+
+            menu.addItem(NSMenuItem.separator())
+
+            let fixItem = NSMenuItem(title: "Apri Impostazioni Privacy...", action: #selector(openFDASettings), keyEquivalent: "")
             fixItem.target = self
             menu.addItem(fixItem)
 
-            let helpItem = NSMenuItem(title: "Add RustyBackMenu.app to Full Disk Access", action: nil, keyEquivalent: "")
-            helpItem.isEnabled = false
-            menu.addItem(helpItem)
+            let helpItem1 = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            helpItem1.attributedTitle = MLText.small("  Aggiungi a Full Disk Access:", MLColor.grigio)
+            helpItem1.isEnabled = false
+            menu.addItem(helpItem1)
+
+            let helpItem2 = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            helpItem2.attributedTitle = MLText.small("  1. RustyBackMenu.app", MLColor.info)
+            helpItem2.isEnabled = false
+            menu.addItem(helpItem2)
+
+            let helpItem3 = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            helpItem3.attributedTitle = MLText.small("  2. \(Shell.rustybackDisplayPath)", MLColor.info)
+            helpItem3.isEnabled = false
+            menu.addItem(helpItem3)
 
             menu.addItem(NSMenuItem.separator())
             let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
@@ -1296,8 +1356,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if parts.count >= 2 { diskName = String(parts[1]) }
         }
 
-        // Same structure as idle section but with disk error
-        // Last backup info
+        // Show error banner if last backup failed
+        if currentStatus?.state == "error" {
+            let errorItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            errorItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.rosso),
+                MLText.colored("Ultimo backup fallito", MLColor.rosso)
+            )
+            errorItem.isEnabled = false
+            menu.addItem(errorItem)
+
+            // Read error log for a one-line summary
+            let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+            let errorLogPath = "\(home)/.local/share/rusty-mac-backup/backup-error.log"
+            let errorText = (try? String(contentsOfFile: errorLogPath, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            if errorText.lowercased().contains("full disk access") {
+                let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                hintItem.attributedTitle = MLText.small("  ⚠ Serve Full Disk Access per rustyback", MLColor.rosso)
+                hintItem.isEnabled = false
+                menu.addItem(hintItem)
+
+                let fixItem = NSMenuItem(title: "Apri Impostazioni Privacy...", action: #selector(openFDASettings), keyEquivalent: "")
+                fixItem.target = self
+                menu.addItem(fixItem)
+            } else if errorText.lowercased().contains("not permitted") || errorText.lowercased().contains("permission") {
+                let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                hintItem.attributedTitle = MLText.small("  ⚠ Errore permessi — collega il disco e riprova", MLColor.rosso)
+                hintItem.isEnabled = false
+                menu.addItem(hintItem)
+            } else if !errorText.isEmpty {
+                let line = errorText.components(separatedBy: .newlines)
+                    .first(where: { $0.lowercased().contains("error") }) ?? ""
+                if !line.isEmpty {
+                    let detailItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                    detailItem.attributedTitle = MLText.small("  \(String(line.prefix(80)))", MLColor.grigio)
+                    detailItem.isEnabled = false
+                    menu.addItem(detailItem)
+                }
+            }
+
+            menu.addItem(NSMenuItem.separator())
+        }
+
+        // Last successful backup info (only show if actually meaningful)
         if let status = currentStatus,
            let lastStr = status.last_completed,
            let lastDate = Fmt.parseISO(lastStr) {
@@ -1307,16 +1410,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 : elapsed < 172800 ? MLColor.gold : MLColor.rosso
 
             let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            // If error state, label as "last OK" to distinguish from failed runs
+            let label = currentStatus?.state == "error" ? "Ultimo OK: " : "Ultimo backup: "
             lastItem.attributedTitle = MLText.build(
                 MLText.dot(timeColor),
-                MLText.plain("Ultimo backup: "),
+                MLText.plain(label),
                 MLText.colored(timeStr, timeColor)
             )
             lastItem.isEnabled = false
             menu.addItem(lastItem)
 
-            // Duration + files
-            if let dur = status.last_duration_secs, let files = status.files_total {
+            // Duration + files — only show if there's real data (not stale error zeros)
+            if let dur = status.last_duration_secs, dur > 0.01,
+               let files = status.files_total, files > 0 {
                 let copiedStr = status.bytes_copied.map { Fmt.bytes($0) } ?? ""
                 let durItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
                 durItem.attributedTitle = MLText.build(
@@ -1380,10 +1486,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(lastItem)
         }
 
-        // Duration + files + bytes on one line
+        // Duration + files + bytes on one line (skip if zeros from failed runs)
         if let status = currentStatus,
-           let dur = status.last_duration_secs,
-           let files = status.files_total {
+           let dur = status.last_duration_secs, dur > 0.01,
+           let files = status.files_total, files > 0 {
             let durItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             let copiedStr = status.bytes_copied.map { Fmt.bytes($0) } ?? ""
             durItem.attributedTitle = MLText.build(
@@ -1418,6 +1524,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
             diskItem.isEnabled = false
             menu.addItem(diskItem)
+        }
+
+        // Proactive disk write error — detected when disk connected
+        if let writeError = diskWriteError {
+            let warnItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            warnItem.attributedTitle = MLText.build(
+                MLText.dot(MLColor.rosso),
+                MLText.colored("⚠ Disco non scrivibile", MLColor.rosso)
+            )
+            warnItem.isEnabled = false
+            menu.addItem(warnItem)
+
+            for line in writeError.components(separatedBy: "\n") {
+                let hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                hintItem.attributedTitle = MLText.small("  \(line)", MLColor.grigio)
+                hintItem.isEnabled = false
+                menu.addItem(hintItem)
+            }
         }
 
         // Next scheduled backup
@@ -2271,10 +2395,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        // FDA is managed by the user via System Settings
-        // We can't reliably detect it programmatically on all macOS versions
-        // If backup fails due to permissions, the error will be shown in status
-        return true
+        // Probe TCC-protected directories to detect Full Disk Access
+        let home = NSHomeDirectory()
+        let protectedPaths = [
+            "\(home)/Library/Mail",
+            "\(home)/Library/Messages",
+            "\(home)/Library/Safari",
+        ]
+        for path in protectedPaths {
+            if FileManager.default.isReadableFile(atPath: path) {
+                return true
+            }
+        }
+        // None of the TCC dirs are readable — FDA not granted
+        // (unless the dirs genuinely don't exist, so check that)
+        let anyExists = protectedPaths.contains { FileManager.default.fileExists(atPath: $0) }
+        // If none exist at all, we can't tell — assume FDA is OK
+        return !anyExists
     }
 
     // MARK: Notifications
