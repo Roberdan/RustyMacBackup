@@ -246,7 +246,9 @@ func generateDefaultConfig(homePath: String, backupPath: String) -> String {
                     "Library/Mobile Documents", "Library/Group Containers/*.Office", "Dropbox",
                     "Google Drive", "iCloud Drive*", "node_modules", ".git/objects", "target/debug",
                     "target/release", ".build", "*.tmp", "*.swp", ".cache", "__pycache__", ".venv",
-                    ".tox", ".ollama/models", ".lmstudio", "*.iso", "*.dmg"]
+                    ".tox", ".ollama/models", ".lmstudio", "*.iso", "*.dmg",
+                    "Pictures/Photos Library.photoslibrary", "Pictures/Photo Booth Library",
+                    "Music/Music/Media.localized", "Library/Application Support/MobileSync"]
 
     var lines = ["[source]", "path = \"\(homePath)\"", "extra_paths = ["]
     extraPaths.forEach { lines.append("    \"\($0)\",") }

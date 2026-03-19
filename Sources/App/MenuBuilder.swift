@@ -159,6 +159,8 @@ class MenuBuilder {
         if let update = availableUpdate {
             let upItem = NSMenuItem()
             upItem.attributedTitle = MLText.colored("🆕 Aggiornamento \(update) disponibile", color: MLColor.info)
+            upItem.action = #selector(AppDelegate.installUpdate)
+            upItem.target = delegate
             menu.addItem(upItem)
         }
         menu.addItem(plainAction("View Backup Log", action: #selector(AppDelegate.openBackupLog), key: ""))
@@ -177,6 +179,7 @@ class MenuBuilder {
         menu.addItem(hdr)
         menu.addItem(.separator())
 
+        // Progress bar — save ref for live updates
         let progressItem = NSMenuItem()
         let progressBar = ProgressBarView()
         progressBar.frame = NSRect(x: 0, y: 0, width: 250, height: 32)
@@ -185,19 +188,25 @@ class MenuBuilder {
         }
         progressItem.view = progressBar
         menu.addItem(progressItem)
+        delegate?.liveProgressBar = progressBar
 
+        // Bytes + file count — save ref
+        let filesItem = NSMenuItem()
         if let s = status {
-            let filesItem = NSMenuItem()
             let ft = NSMutableAttributedString()
             ft.append(MLText.colored("  \(Fmt.formatBytes(s.bytesCopied))", color: MLColor.gold))
             ft.append(MLText.plain(" copiati  "))
             ft.append(MLText.small("\(Fmt.formatFileCount(s.filesDone)) / \(Fmt.formatFileCount(s.filesTotal)) file",
                                     color: MLColor.grigio))
             filesItem.attributedTitle = ft
-            filesItem.isEnabled = false
-            menu.addItem(filesItem)
+        } else {
+            filesItem.attributedTitle = MLText.small("  Avvio...")
         }
+        filesItem.isEnabled = false
+        menu.addItem(filesItem)
+        delegate?.liveFilesItem = filesItem
 
+        // Speedometer — save ref
         let speedItem = NSMenuItem()
         let speedo = SpeedometerView()
         speedo.frame = NSRect(x: 0, y: 0, width: 220, height: 90)
@@ -207,24 +216,30 @@ class MenuBuilder {
         }
         speedItem.view = speedo
         menu.addItem(speedItem)
+        delegate?.liveSpeedometer = speedo
 
+        // Current file — save ref (always add, update text live)
+        let fileItem = NSMenuItem()
         if let s = status, !s.currentFile.isEmpty {
-            let clean = MLText.cleanPath(s.currentFile)
-            let fileItem = NSMenuItem()
-            fileItem.attributedTitle = MLText.small("  ▸ \(clean)", color: MLColor.grigio)
-            fileItem.isEnabled = false
-            menu.addItem(fileItem)
+            fileItem.attributedTitle = MLText.small("  ▸ \(MLText.cleanPath(s.currentFile))", color: MLColor.grigio)
+        } else {
+            fileItem.attributedTitle = MLText.small("  ▸ ...", color: MLColor.grigio)
         }
+        fileItem.isEnabled = false
+        menu.addItem(fileItem)
+        delegate?.liveFileItem = fileItem
 
+        // Errors — save ref
+        let errItem = NSMenuItem()
         if let s = status, s.errors > 0 {
-            let errItem = NSMenuItem()
             let et = NSMutableAttributedString()
             et.append(MLText.small("  \(s.errors) file protetti ignorati", color: MLColor.warning))
             et.append(MLText.small(" (normale)", color: MLColor.grigio))
             errItem.attributedTitle = et
-            errItem.isEnabled = false
-            menu.addItem(errItem)
         }
+        errItem.isEnabled = false
+        menu.addItem(errItem)
+        delegate?.liveErrorItem = errItem
 
         menu.addItem(.separator())
 
