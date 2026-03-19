@@ -1,92 +1,44 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="1.0.0"
+APP_NAME="RustyMacBackup"
 PKG_ID="com.roberdan.rusty-mac-backup"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILD_DIR="${SCRIPT_DIR}/pkg-build"
-OUTPUT="${SCRIPT_DIR}/RustyMacBackup-${VERSION}.pkg"
 
-echo ""
-echo "  Building RustyMacBackup v${VERSION} installer package"
-echo "  ────────────────────────────────────────────────────"
-echo ""
+echo "📦 Building $APP_NAME v$VERSION installer..."
 
-# Step 1: Build everything (skip if already built in CI)
-if [ ! -f "${SCRIPT_DIR}/target/release/rustyback" ]; then
-    echo "1/5  Building backup engine..."
-    cd "$SCRIPT_DIR"
-    cargo build --release --quiet
-else
-    echo "1/5  Binary already built, skipping..."
-fi
+# Step 1: Build the app
+./build.sh
 
-if [ ! -d "${SCRIPT_DIR}/menubar/RustyBackMenu.app" ]; then
-    echo "2/5  Building menu bar app..."
-    bash menubar/build.sh 2>&1 | tail -1
-else
-    echo "2/5  Menu bar app already built, skipping..."
-fi
+# Step 2: Create staging directory
+PKG_ROOT=$(mktemp -d)
+SCRIPTS_DIR=$(mktemp -d)
+trap "rm -rf $PKG_ROOT $SCRIPTS_DIR" EXIT
 
-# Step 3: Create package staging area
-echo "3/5  Staging package contents..."
-rm -rf "$BUILD_DIR"
-mkdir -p "${BUILD_DIR}/payload/usr/local/bin"
-mkdir -p "${BUILD_DIR}/payload/Applications"
-mkdir -p "${BUILD_DIR}/scripts"
+# Stage .app to /Applications
+mkdir -p "$PKG_ROOT/Applications"
+cp -R "build/$APP_NAME.app" "$PKG_ROOT/Applications/"
 
-# CLI binary
-cp target/release/rustyback "${BUILD_DIR}/payload/usr/local/bin/rustyback"
-chmod 755 "${BUILD_DIR}/payload/usr/local/bin/rustyback"
-
-# Menu bar app bundle
-cp -R menubar/RustyBackMenu.app "${BUILD_DIR}/payload/Applications/RustyBackMenu.app"
-
-# Post-install script: launch app + show FDA reminder
-cat > "${BUILD_DIR}/scripts/postinstall" << 'POSTINSTALL'
+# Step 3: Create postinstall script
+cat > "$SCRIPTS_DIR/postinstall" << 'POSTINSTALL'
 #!/bin/bash
-
-# Ensure CLI is accessible
-if [ -d "/opt/homebrew/bin" ]; then
-    ln -sf /usr/local/bin/rustyback /opt/homebrew/bin/rustyback 2>/dev/null || true
-fi
-
-# Open the menu bar app
-open /Applications/RustyBackMenu.app 2>/dev/null || true
-
-# Show reminder about Full Disk Access
-osascript -e '
-display dialog "RustyMacBackup installed successfully!\n\nIMPORTANT: Grant Full Disk Access to:\n• /Applications/RustyBackMenu.app\n• Your terminal app\n\nSystem Settings → Privacy & Security → Full Disk Access" buttons {"Open Settings", "OK"} default button "OK" with title "RustyMacBackup" with icon note
-set result to button returned of result
-if result is "Open Settings" then
-    open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-end if
-' 2>/dev/null || true
-
+# Open FDA settings reminder
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
+# Launch the app
+open "/Applications/RustyMacBackup.app" 2>/dev/null || true
 exit 0
 POSTINSTALL
-chmod 755 "${BUILD_DIR}/scripts/postinstall"
+chmod +x "$SCRIPTS_DIR/postinstall"
 
-# Step 4: Build the .pkg
-echo "4/5  Building .pkg..."
+# Step 4: Build .pkg
 pkgbuild \
-    --root "${BUILD_DIR}/payload" \
-    --scripts "${BUILD_DIR}/scripts" \
+    --root "$PKG_ROOT" \
     --identifier "$PKG_ID" \
     --version "$VERSION" \
     --install-location "/" \
-    "$OUTPUT" \
-    2>&1 | grep -v "^$"
+    --scripts "$SCRIPTS_DIR" \
+    "$APP_NAME-$VERSION.pkg"
 
-# Cleanup
-rm -rf "$BUILD_DIR"
-
-echo "5/5  Done!"
 echo ""
-PKG_SIZE=$(ls -lh "$OUTPUT" | awk '{print $5}')
-echo "  ✅ ${OUTPUT}"
-echo "     Size: ${PKG_SIZE}"
-echo ""
-echo "  Double-click to install, or:"
-echo "     sudo installer -pkg ${OUTPUT} -target /"
-echo ""
+echo "🎉 Package built: $APP_NAME-$VERSION.pkg"
+echo "   Install with: sudo installer -pkg $APP_NAME-$VERSION.pkg -target /"

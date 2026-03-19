@@ -6,34 +6,14 @@ on:
   pull_request:
     branches: [main, master]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   test:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release
+        run: ./build.sh
 
       - name: Run tests
-        run: cargo test --verbose
-
-      - name: Clippy
-        run: cargo clippy -- -W clippy::all
-
-      - name: Format check
-        run: cargo fmt -- --check
-
-      - name: Build menu bar app
-        run: bash menubar/build.sh
-
-      - name: Verify artifacts
-        run: |
-          test -f target/release/rustyback || { echo "❌ rustyback binary missing"; exit 1; }
-          test -d menubar/RustyBackMenu.app || { echo "❌ RustyBackMenu.app missing"; exit 1; }
-          echo "✅ All artifacts built successfully"
+        run: ./run-tests.sh
