@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.0.0] - 2026-03-19
+
+### 🏎️ Full Swift Native Rewrite
+
+Complete rewrite from Rust + Swift dual-binary to a single native Swift `.app` bundle.
+
+### Added
+- Single .app bundle serves as both menu bar app and CLI tool
+- Backup engine with `copyfile()` APFS clone support and hard links
+- Parallel file processing via Swift `TaskGroup` (8 workers)
+- Manual TOML config parser (zero external dependencies)
+- Battery-aware I/O throttling via `setiopolicy_np`
+- Stale mountpoint detection via `statfs` device comparison
+- Full Disk Access diagnostics with actionable Italian messages
+- Maranello Luce design system (Ferrari-inspired adaptive colors)
+- ProgressBarView — gradient progress bar (rosso→gold→verde)
+- SpeedometerView — animated Ferrari-style gauge with spring physics
+- Status bar icon with colored dot and micro-animations
+- Schedule/preferences submenus in menu bar
+- UNUserNotification alerts for backup events
+- GitHub release auto-updater
+- 25 unit tests (ExcludeFilter, Retention, Config, BackupEngine, HardLinker)
+- `build.sh` and `build-pkg.sh` for .app and .pkg distribution
+
+### Breaking Changes
+- **Rust binary removed** — `rustyback` CLI is gone
+- **Single .app replaces two binaries** — no more `RustyBackMenu.app` + `rustyback`
+- **CLI access**: `/Applications/RustyMacBackup.app/Contents/MacOS/RustyMacBackup <command>`
+- **LaunchAgent updated**: ProgramArguments now points to .app bundle binary
+- **macOS 14+ required** (was 13+)
+
 ## [0.3.1] - 2026-03-19
 
 ### Fixed
