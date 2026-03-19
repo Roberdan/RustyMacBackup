@@ -239,16 +239,33 @@ struct RetentionConfig {
 
 func generateDefaultConfig(homePath: String, backupPath: String) -> String {
     let extraPaths = ["/Applications", "/opt/homebrew", "/usr/local", "/etc", "/Library"]
-    let patterns = [".Spotlight-*", ".fseventsd", ".Trash", ".Trashes", ".DS_Store", ".TemporaryItems",
-                    ".VolumeIcon.icns", "Library/Caches", "Library/Logs", "Library/Application Support/Caches",
-                    "Library/Saved Application State", "Library/Containers/*/Data/Library/Caches",
-                    "Library/Updates", "Library/Developer", "OneDrive*", "Library/CloudStorage",
-                    "Library/Mobile Documents", "Library/Group Containers/*.Office", "Dropbox",
-                    "Google Drive", "iCloud Drive*", "node_modules", ".git/objects", "target/debug",
-                    "target/release", ".build", "*.tmp", "*.swp", ".cache", "__pycache__", ".venv",
-                    ".tox", ".ollama/models", ".lmstudio", "*.iso", "*.dmg",
-                    "Pictures/Photos Library.photoslibrary", "Pictures/Photo Booth Library",
-                    "Music/Music/Media.localized", "Library/Application Support/MobileSync"]
+    let patterns = [
+        // macOS system junk
+        ".Spotlight-*", ".fseventsd", ".Trash", ".Trashes", ".DS_Store",
+        ".TemporaryItems", ".VolumeIcon.icns",
+        // Library caches & logs (regenerable)
+        "Library/Caches", "Library/Logs", "Library/Application Support/Caches",
+        "Library/Saved Application State", "Library/Containers/*/Data/Library/Caches",
+        "Library/Updates", "Library/Developer",
+        // Cloud-synced (already backed up by Apple/cloud providers)
+        "Library/CloudStorage", "Library/Mobile Documents",
+        "Library/Application Support/CloudDocs",
+        "Library/Group Containers/*.Office",
+        "OneDrive*", "Dropbox", "Google Drive", "iCloud Drive*",
+        // Photos & Music (synced via iCloud/Apple)
+        "Pictures/Photos Library.photoslibrary",
+        "Pictures/Photo Booth Library",
+        "Music/Music/Media.localized",
+        // iOS backups (huge, regenerable)
+        "Library/Application Support/MobileSync",
+        // Dev build artifacts (regenerable)
+        "node_modules", ".git/objects", "target/debug", "target/release",
+        ".build", "*.tmp", "*.swp", ".cache", "__pycache__", ".venv", ".tox",
+        // Large AI models
+        ".ollama/models", ".lmstudio",
+        // Disk images
+        "*.iso", "*.dmg",
+    ]
 
     var lines = ["[source]", "path = \"\(homePath)\"", "extra_paths = ["]
     extraPaths.forEach { lines.append("    \"\($0)\",") }
