@@ -131,6 +131,75 @@ enum RestoreEngine {
         return result
     }
 
+    // MARK: - Undo restore
+
+    private static var preRestoreBase: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".rustybackup-pre-restore")
+    }
+
+    /// Check if any pre-restore backups exist.
+    static func hasPreRestoreBackup() -> Bool {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: preRestoreBase.path),
+              let contents = try? fm.contentsOfDirectory(atPath: preRestoreBase.path) else {
+            return false
+        }
+        return !contents.filter({ !$0.hasPrefix(".") }).isEmpty
+    }
+
+    /// Find the most recent pre-restore backup directory.
+    static func latestPreRestoreBackup() -> URL? {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: preRestoreBase,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        return contents
+            .filter { $0.lastPathComponent.count == 15 } // YYYYMMDD_HHMMSS
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .first
+    }
+
+    /// List items in a pre-restore backup (relative paths).
+    static func scanPreRestoreBackup(at backupDir: URL) -> [String] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: backupDir, includingPropertiesForKeys: nil, options: []
+        ) else { return [] }
+        return contents.map(\.lastPathComponent).sorted()
+    }
+
+    /// Undo the last restore by copying pre-restore files back to home.
+    static func undoRestore(from backupDir: URL) -> RestoreResult {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let items = scanPreRestoreBackup(at: backupDir)
+        var result = RestoreResult()
+
+        for rel in items {
+            let source = backupDir.appendingPathComponent(rel)
+            let dest = home.appendingPathComponent(rel)
+            do {
+                if fm.fileExists(atPath: dest.path) {
+                    try fm.removeItem(at: dest)
+                    result.overwritten += 1
+                }
+                try fm.copyItem(at: source, to: dest)
+                result.restored += 1
+            } catch {
+                result.failed += 1
+            }
+        }
+
+        // Remove the pre-restore backup after successful undo
+        if result.failed == 0 {
+            try? fm.removeItem(at: backupDir)
+        }
+
+        return result
+    }
+
     /// Run brew bundle install from the Brewfile in the snapshot.
     static func restoreHomebrew(snapshotURL: URL,
                                 progress: ((String) -> Void)? = nil) -> Bool {

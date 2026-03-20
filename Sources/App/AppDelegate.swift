@@ -212,6 +212,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         }
     }
 
+    func popoverDidRequestUndoRestore() {
+        guard let backupDir = RestoreEngine.latestPreRestoreBackup() else { return }
+        popover.performClose(nil)
+        iconManager.setState(.running)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = RestoreEngine.undoRestore(from: backupDir)
+            DispatchQueue.main.async {
+                self?.iconManager.setState(.idle)
+                self?.sendNotification(
+                    title: "Undo restore complete",
+                    body: "\(result.restored) files restored to original state, \(result.failed) failed")
+                self?.popoverVC.refresh()
+            }
+        }
+    }
+
     func popoverDidRequestQuit() {
         NSApplication.shared.terminate(nil)
     }

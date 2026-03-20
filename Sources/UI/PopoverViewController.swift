@@ -9,6 +9,7 @@ protocol PopoverDelegate: AnyObject {
     func popoverDidSelectDisk(_ volumeURL: URL)
     func popoverDidTogglePath(_ path: String, enabled: Bool)
     func popoverDidRequestRestore(_ snapshotURL: URL, items: [String], brewInstall: Bool)
+    func popoverDidRequestUndoRestore()
     func popoverDidRequestQuit()
     func popoverGetState() -> AppState
     func popoverGetStatus() -> BackupStatusFile?
@@ -35,6 +36,7 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
     private var toolsScroll = NSScrollView()
     private var toolsStack = NSStackView()
     private var categoryViews: [ToolsCategoryView] = []
+    private var undoRestoreButton: NSButton!
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
@@ -174,6 +176,17 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         // -- Actions --
         addAction("Open Backup Folder", icon: "folder", action: #selector(openFolderTapped))
         addAction("Eject Disk", icon: "eject", action: #selector(ejectTapped))
+        undoRestoreButton = NSButton(title: "Undo Last Restore", target: self, action: #selector(undoRestoreTapped))
+        undoRestoreButton.bezelStyle = .inline
+        undoRestoreButton.isBordered = false
+        undoRestoreButton.font = .systemFont(ofSize: 13)
+        undoRestoreButton.alignment = .left
+        undoRestoreButton.contentTintColor = MLColor.warning
+        if let img = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Undo Restore") {
+            undoRestoreButton.image = img
+            undoRestoreButton.imagePosition = .imageLeading
+        }
+        addToOuter(undoRestoreButton)
         addSep()
         addAction("Quit", icon: "power", action: #selector(quitTapped), key: "q")
     }
@@ -253,6 +266,9 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
             let pct = s.filesTotal > 0 ? "\(Int(Double(s.filesDone) / Double(s.filesTotal) * 100))%" : ""
             progressLabel.stringValue = "\(pct)  \(Fmt.formatBytes(s.bytesPerSec))/s  \(s.etaSecs > 0 ? "ETA: \(Fmt.formatDuration(Double(s.etaSecs)))" : "scanning...")"
         }
+
+        // Undo restore -- visible only if pre-restore backups exist
+        undoRestoreButton.isHidden = !RestoreEngine.hasPreRestoreBackup()
 
         // Tools -- only rebuild if not running (avoid flicker)
         if !running { rebuildToolsList(config: config) }
@@ -442,6 +458,27 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         let vols = discoverVolumes()
         guard sender.tag < vols.count else { return }
         popoverDelegate?.popoverDidSelectDisk(vols[sender.tag])
+    }
+
+    @objc private func undoRestoreTapped() {
+        guard let latest = RestoreEngine.latestPreRestoreBackup() else { return }
+        let items = RestoreEngine.scanPreRestoreBackup(at: latest)
+
+        let alert = NSAlert()
+        alert.messageText = "Undo last restore?"
+        var details = "This will restore \(items.count) original files from before the last restore:\n"
+        for item in items.prefix(10) {
+            details += "\n  ~/\(item)"
+        }
+        if items.count > 10 { details += "\n  ... and \(items.count - 10) more" }
+        details += "\n\nThe restored versions will be overwritten with your originals."
+        alert.informativeText = details
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Undo Restore")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        popoverDelegate?.popoverDidRequestUndoRestore()
     }
 
     @objc private func backupTapped() {
