@@ -8,6 +8,7 @@ protocol PopoverDelegate: AnyObject {
     func popoverDidRequestAddFolder()
     func popoverDidSelectDisk(_ volumeURL: URL)
     func popoverDidTogglePath(_ path: String, enabled: Bool)
+    func popoverDidRequestRestore(_ snapshotURL: URL, items: [String], brewInstall: Bool)
     func popoverDidRequestQuit()
     func popoverGetState() -> AppState
     func popoverGetStatus() -> BackupStatusFile?
@@ -27,6 +28,8 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
     private let statsLabel = NSTextField(labelWithString: "")
     private var diskStack = NSStackView()
     private let diskHeader = NSTextField(labelWithString: "")
+    private var restoreStack = NSStackView()
+    private let restoreHeader = NSTextField(labelWithString: "")
     private let toolsHeaderRow = NSStackView()
     private let toolsHeaderLabel = NSTextField(labelWithString: "")
     private var toolsScroll = NSScrollView()
@@ -118,6 +121,17 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         diskStack.alignment = .leading
         diskStack.spacing = 4
         addToOuter(diskStack)
+        addSep()
+
+        // -- Restore section (visible when backups found but no config) --
+        restoreHeader.font = .systemFont(ofSize: 12, weight: .semibold)
+        restoreHeader.textColor = .labelColor
+        restoreHeader.stringValue = "Restore from Backup"
+        addToOuter(restoreHeader)
+        restoreStack.orientation = .vertical
+        restoreStack.alignment = .leading
+        restoreStack.spacing = 4
+        addToOuter(restoreStack)
         addSep()
 
         // -- Tools section header --
@@ -217,11 +231,18 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
             }
         }
 
-        // Disk selection
+        // Disk selection + restore (setup mode)
         let showDisks = state == .needsSetup
         diskHeader.isHidden = !showDisks
         diskStack.isHidden = !showDisks
         if showDisks { rebuildDiskList() }
+
+        // Restore section
+        let backups = showDisks ? RestoreEngine.findBackupSnapshots() : []
+        let showRestore = !backups.isEmpty
+        restoreHeader.isHidden = !showRestore
+        restoreStack.isHidden = !showRestore
+        if showRestore { rebuildRestoreList(backups: backups) }
 
         // Progress
         let running = state == .running
@@ -286,6 +307,63 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         popoverDelegate?.popoverDidTogglePath(path, enabled: enabled)
         // Refresh immediately to update counts
         DispatchQueue.main.async { [weak self] in self?.refresh() }
+    }
+
+    // MARK: - Restore
+
+    private var foundBackups: [(volume: String, backupDir: URL, snapshots: [String])] = []
+
+    private func rebuildRestoreList(backups: [(volume: String, backupDir: URL, snapshots: [String])]) {
+        restoreStack.arrangedSubviews.forEach { restoreStack.removeArrangedSubview($0); $0.removeFromSuperview() }
+        foundBackups = backups
+
+        for (i, backup) in backups.enumerated() {
+            guard let latest = backup.snapshots.first else { continue }
+            let snapshotURL = backup.backupDir.appendingPathComponent(latest)
+            let hasBrewfile = FileManager.default.fileExists(
+                atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path)
+            let items = RestoreEngine.scanSnapshot(at: snapshotURL)
+
+            let infoLabel = NSTextField(labelWithString:
+                "\(backup.volume): \(latest)  --  \(items.count) items\(hasBrewfile ? " + Brewfile" : "")")
+            infoLabel.font = .systemFont(ofSize: 11)
+            infoLabel.textColor = MLColor.secondary
+            restoreStack.addArrangedSubview(infoLabel)
+
+            let btn = NSButton(title: "Restore Everything", target: self, action: #selector(restoreTapped(_:)))
+            btn.bezelStyle = .rounded
+            btn.font = .systemFont(ofSize: 12, weight: .medium)
+            btn.tag = i
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.widthAnchor.constraint(equalToConstant: 272).isActive = true
+            restoreStack.addArrangedSubview(btn)
+        }
+    }
+
+    @objc private func restoreTapped(_ sender: NSButton) {
+        guard sender.tag < foundBackups.count else { return }
+        let backup = foundBackups[sender.tag]
+        guard let latest = backup.snapshots.first else { return }
+        let snapshotURL = backup.backupDir.appendingPathComponent(latest)
+        let items = RestoreEngine.scanSnapshot(at: snapshotURL).map(\.relativePath)
+        let hasBrewfile = FileManager.default.fileExists(
+            atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path)
+
+        // Confirmation alert
+        let alert = NSAlert()
+        alert.messageText = "Restore from \(latest)?"
+        alert.informativeText = """
+            This will restore \(items.count) items to your home directory.
+            Existing files will NOT be overwritten.
+            \(hasBrewfile ? "Homebrew packages will be reinstalled from Brewfile." : "")
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Restore")
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        popoverDelegate?.popoverDidRequestRestore(snapshotURL, items: items, brewInstall: hasBrewfile)
     }
 
     // MARK: - Disk selection

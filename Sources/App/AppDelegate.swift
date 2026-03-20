@@ -181,6 +181,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         self.config = config
     }
 
+    func popoverDidRequestRestore(_ snapshotURL: URL, items: [String], brewInstall: Bool) {
+        popover.performClose(nil)
+        iconManager.setState(.running)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items) { item, done, total in
+                DispatchQueue.main.async {
+                    self?.sendNotification(title: "Restoring...",
+                                          body: "\(done)/\(total): \(item)")
+                }
+            }
+
+            var brewOK = true
+            if brewInstall {
+                brewOK = RestoreEngine.restoreHomebrew(snapshotURL: snapshotURL)
+            }
+
+            DispatchQueue.main.async {
+                self?.iconManager.setState(.idle)
+                let brewMsg = brewInstall ? (brewOK ? "\nHomebrew packages restored." : "\nHomebrew restore had errors.") : ""
+                self?.sendNotification(
+                    title: "Restore complete",
+                    body: "\(result.restored) restored, \(result.skipped) skipped, \(result.failed) failed\(brewMsg)")
+
+                // After restore, create config pointing to this backup disk
+                let backupDir = snapshotURL.deletingLastPathComponent()
+                let newConfig = generateDefaultConfig(backupPath: backupDir.path)
+                try? newConfig.save(to: Config.defaultPath)
+                self?.config = try? Config.load(from: Config.defaultPath)
+                self?.pollStatus()
+                self?.popoverVC.refresh()
+            }
+        }
+    }
+
     func popoverDidRequestQuit() {
         NSApplication.shared.terminate(nil)
     }
