@@ -14,25 +14,27 @@ protocol PopoverDelegate: AnyObject {
     func popoverGetConfig() -> Config?
 }
 
-class PopoverViewController: NSViewController {
+class PopoverViewController: NSViewController, ToolToggleDelegate {
     weak var popoverDelegate: PopoverDelegate?
     private var updateTimer: Timer?
 
-    private let stack = NSStackView()
+    private let outerStack = NSStackView()
     private let headerLabel = NSTextField(labelWithString: "RustyMacBackup")
     private let statusLabel = NSTextField(labelWithString: "")
     private let backupButton = NSButton()
     private let progressBar = ProgressBarView()
     private let progressLabel = NSTextField(labelWithString: "")
     private let statsLabel = NSTextField(labelWithString: "")
-    private var folderStack = NSStackView()
-    private let folderHeader = NSTextField(labelWithString: "")
     private var diskStack = NSStackView()
     private let diskHeader = NSTextField(labelWithString: "")
+    private let toolsHeaderRow = NSStackView()
+    private let toolsHeaderLabel = NSTextField(labelWithString: "")
+    private var toolsScroll = NSScrollView()
+    private var toolsStack = NSStackView()
+    private var categoryViews: [ToolsCategoryView] = []
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 400))
-        self.view = container
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
     }
 
     override func viewDidLoad() {
@@ -56,103 +58,113 @@ class PopoverViewController: NSViewController {
     }
 
     private func setupUI() {
+        // Vibrancy background
         let effect = NSVisualEffectView()
         effect.blendingMode = .behindWindow
         effect.material = .popover
         effect.state = .active
         effect.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(effect)
-        NSLayoutConstraint.activate([
-            effect.topAnchor.constraint(equalTo: view.topAnchor),
-            effect.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            effect.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            effect.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
+        pin(effect, to: view)
 
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: effect.topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: effect.bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-        ])
+        outerStack.orientation = .vertical
+        outerStack.alignment = .leading
+        outerStack.spacing = 4
+        outerStack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        outerStack.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(outerStack)
+        pin(outerStack, to: effect)
 
-        // Header row
+        // -- Header row --
         let headerRow = makeRow()
         headerLabel.font = .boldSystemFont(ofSize: 15)
         headerLabel.textColor = .labelColor
         headerRow.addArrangedSubview(headerLabel)
-        headerRow.addArrangedSubview(spacer())
+        headerRow.addArrangedSubview(hSpacer())
         backupButton.bezelStyle = .rounded
         backupButton.controlSize = .regular
         backupButton.target = self
         backupButton.action = #selector(backupTapped)
         headerRow.addArrangedSubview(backupButton)
-        addRow(headerRow)
+        addToOuter(headerRow)
 
-        // Status
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = MLColor.secondary
-        addRow(statusLabel)
-        addSeparator()
+        addToOuter(statusLabel)
+        addSep()
 
-        // Stats row
+        // -- Stats --
         statsLabel.font = .systemFont(ofSize: 12)
         statsLabel.textColor = .labelColor
         statsLabel.maximumNumberOfLines = 2
-        addRow(statsLabel)
+        addToOuter(statsLabel)
 
-        // Progress (hidden when idle)
+        // -- Progress --
         progressBar.translatesAutoresizingMaskIntoConstraints = false
-        progressBar.heightAnchor.constraint(equalToConstant: 20).isActive = true
-        progressBar.widthAnchor.constraint(equalToConstant: 288).isActive = true
-        addRow(progressBar)
-
+        progressBar.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        progressBar.widthAnchor.constraint(equalToConstant: 292).isActive = true
+        addToOuter(progressBar)
         progressLabel.font = .systemFont(ofSize: 11)
         progressLabel.textColor = MLColor.secondary
-        addRow(progressLabel)
-        addSeparator()
+        addToOuter(progressLabel)
+        addSep()
 
-        // Disk selection (visible only during setup)
+        // -- Disk selection (setup only) --
         diskHeader.font = .systemFont(ofSize: 12, weight: .semibold)
         diskHeader.textColor = .labelColor
         diskHeader.stringValue = "Select Backup Disk"
-        addRow(diskHeader)
+        addToOuter(diskHeader)
         diskStack.orientation = .vertical
         diskStack.alignment = .leading
         diskStack.spacing = 4
-        addRow(diskStack)
-        addSeparator()
+        addToOuter(diskStack)
+        addSep()
 
-        // Folders section
-        let folderTitleRow = makeRow()
-        folderHeader.font = .systemFont(ofSize: 12, weight: .semibold)
-        folderHeader.textColor = .labelColor
-        folderTitleRow.addArrangedSubview(folderHeader)
-        folderTitleRow.addArrangedSubview(spacer())
-        let addBtn = NSButton(title: "+", target: self, action: #selector(addFolderTapped))
+        // -- Tools section header --
+        toolsHeaderRow.orientation = .horizontal
+        toolsHeaderRow.alignment = .centerY
+        toolsHeaderRow.spacing = 8
+        toolsHeaderRow.translatesAutoresizingMaskIntoConstraints = false
+        toolsHeaderRow.widthAnchor.constraint(equalToConstant: 292).isActive = true
+        toolsHeaderLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        toolsHeaderLabel.textColor = .labelColor
+        toolsHeaderRow.addArrangedSubview(toolsHeaderLabel)
+        toolsHeaderRow.addArrangedSubview(hSpacer())
+        let addBtn = NSButton(title: "+ Add", target: self, action: #selector(addFolderTapped))
         addBtn.bezelStyle = .inline
-        addBtn.font = .systemFont(ofSize: 12, weight: .bold)
-        folderTitleRow.addArrangedSubview(addBtn)
-        addRow(folderTitleRow)
+        addBtn.font = .systemFont(ofSize: 11, weight: .medium)
+        toolsHeaderRow.addArrangedSubview(addBtn)
+        addToOuter(toolsHeaderRow)
 
-        folderStack.orientation = .vertical
-        folderStack.alignment = .leading
-        folderStack.spacing = 2
-        addRow(folderStack)
-        addSeparator()
+        // -- Scrollable tools list --
+        toolsStack.orientation = .vertical
+        toolsStack.alignment = .leading
+        toolsStack.spacing = 6
+        toolsStack.translatesAutoresizingMaskIntoConstraints = false
 
-        // Action buttons
-        addActionRow("Open Backup Folder", icon: "folder", action: #selector(openFolderTapped))
-        addActionRow("Eject Disk", icon: "eject", action: #selector(ejectTapped))
-        addSeparator()
-        addActionRow("Quit", icon: "power", action: #selector(quitTapped), key: "q")
+        let clipView = NSClipView()
+        clipView.documentView = toolsStack
+        clipView.drawsBackground = false
+        toolsScroll.contentView = clipView
+        toolsScroll.drawsBackground = false
+        toolsScroll.hasVerticalScroller = true
+        toolsScroll.autohidesScrollers = true
+        toolsScroll.borderType = .noBorder
+        toolsScroll.translatesAutoresizingMaskIntoConstraints = false
+        toolsScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
+        toolsScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
+        toolsScroll.widthAnchor.constraint(equalToConstant: 292).isActive = true
+        addToOuter(toolsScroll)
+        addSep()
+
+        // -- Actions --
+        addAction("Open Backup Folder", icon: "folder", action: #selector(openFolderTapped))
+        addAction("Eject Disk", icon: "eject", action: #selector(ejectTapped))
+        addSep()
+        addAction("Quit", icon: "power", action: #selector(quitTapped), key: "q")
     }
+
+    // MARK: - Refresh
 
     func refresh() {
         guard let delegate = popoverDelegate else { return }
@@ -160,7 +172,7 @@ class PopoverViewController: NSViewController {
         let status = delegate.popoverGetStatus()
         let config = delegate.popoverGetConfig()
 
-        // Status label + button
+        // Header button
         switch state {
         case .needsSetup:
             statusLabel.stringValue = "Setup required -- select backup disk"
@@ -193,194 +205,187 @@ class PopoverViewController: NSViewController {
 
         // Stats
         if let s = status, !s.lastCompleted.isEmpty {
-            let timeAgo = Fmt.timeAgo(from: s.lastCompleted)
-            let bytes = Fmt.formatBytes(s.bytesCopied)
-            let files = Fmt.formatFileCount(s.filesTotal)
-            statsLabel.stringValue = "Last: \(timeAgo)  --  \(files) files  --  \(bytes)"
+            statsLabel.stringValue = "Last: \(Fmt.timeAgo(from: s.lastCompleted))  --  \(Fmt.formatFileCount(s.filesTotal)) files  --  \(Fmt.formatBytes(s.bytesCopied))"
         } else {
             statsLabel.stringValue = "No backups yet"
         }
-
-        // Disk space
         if let c = config {
             let (free, total) = DiskDiagnostics.diskSpace(at: c.destination.path)
             if total > 0 {
-                let volName = URL(fileURLWithPath: c.destination.path)
-                    .deletingLastPathComponent().lastPathComponent
-                statsLabel.stringValue += "\n\(volName): \(Fmt.formatBytes(free)) free / \(Fmt.formatBytes(total))"
+                let vol = URL(fileURLWithPath: c.destination.path).deletingLastPathComponent().lastPathComponent
+                statsLabel.stringValue += "\n\(vol): \(Fmt.formatBytes(free)) free / \(Fmt.formatBytes(total))"
             }
         }
 
-        // Disk selection (setup mode)
+        // Disk selection
         let showDisks = state == .needsSetup
         diskHeader.isHidden = !showDisks
         diskStack.isHidden = !showDisks
-        if showDisks {
-            rebuildDiskList()
-        }
+        if showDisks { rebuildDiskList() }
 
         // Progress
-        let isRunning = state == .running
-        progressBar.isHidden = !isRunning
-        progressLabel.isHidden = !isRunning
-        if isRunning, let s = status {
-            if s.filesTotal > 0 {
-                progressBar.progress = CGFloat(s.filesDone) / CGFloat(s.filesTotal)
-            }
-            let speed = Fmt.formatBytes(s.bytesPerSec) + "/s"
-            let eta = s.etaSecs > 0 ? "ETA: \(Fmt.formatDuration(Double(s.etaSecs)))" : "scanning..."
+        let running = state == .running
+        progressBar.isHidden = !running
+        progressLabel.isHidden = !running
+        if running, let s = status {
+            if s.filesTotal > 0 { progressBar.progress = CGFloat(s.filesDone) / CGFloat(s.filesTotal) }
             let pct = s.filesTotal > 0 ? "\(Int(Double(s.filesDone) / Double(s.filesTotal) * 100))%" : ""
-            progressLabel.stringValue = "\(pct)  \(speed)  \(eta)"
+            progressLabel.stringValue = "\(pct)  \(Fmt.formatBytes(s.bytesPerSec))/s  \(s.etaSecs > 0 ? "ETA: \(Fmt.formatDuration(Double(s.etaSecs)))" : "scanning...")"
         }
 
-        // Folders
-        rebuildFolderList(config: config)
+        // Tools -- only rebuild if not running (avoid flicker)
+        if !running { rebuildToolsList(config: config) }
     }
 
-    private func rebuildFolderList(config: Config?) {
-        for v in folderStack.arrangedSubviews { folderStack.removeArrangedSubview(v); v.removeFromSuperview() }
+    // MARK: - Tools list with categories
 
-        guard let paths = config?.source.paths else {
-            folderHeader.stringValue = "Backup Folders (0)"
-            return
-        }
-        folderHeader.stringValue = "Backup Folders (\(paths.count))"
+    private func rebuildToolsList(config: Config?) {
+        categoryViews.forEach { $0.removeFromSuperview() }
+        categoryViews.removeAll()
+        toolsStack.arrangedSubviews.forEach { toolsStack.removeArrangedSubview($0); $0.removeFromSuperview() }
 
-        for path in paths.prefix(15) {
-            let display = ConfigDiscovery.contract(ConfigDiscovery.expand(path))
-            let label = NSTextField(labelWithString: display)
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = MLColor.secondary
-            label.lineBreakMode = .byTruncatingMiddle
-            label.widthAnchor.constraint(lessThanOrEqualToConstant: 270).isActive = true
-            folderStack.addArrangedSubview(label)
+        let discovered = ConfigDiscovery.discover()
+        let enabledPaths = Set(config?.source.paths ?? [])
+        let pathCount = enabledPaths.count
+        toolsHeaderLabel.stringValue = "Backup Sources (\(pathCount))"
+
+        // Group by category
+        var grouped: [(category: String, items: [(label: String, paths: [String], sensitive: Bool)])] = []
+        var seen: [String: Int] = [:]
+        for item in discovered {
+            if let idx = seen[item.category] {
+                grouped[idx].items.append((item.label, item.paths, item.sensitive))
+            } else {
+                seen[item.category] = grouped.count
+                grouped.append((item.category, [(item.label, item.paths, item.sensitive)]))
+            }
         }
-        if paths.count > 15 {
-            let more = NSTextField(labelWithString: "... and \(paths.count - 15) more")
-            more.font = .systemFont(ofSize: 10)
-            more.textColor = MLColor.tertiary
-            folderStack.addArrangedSubview(more)
+
+        // Custom paths not in any discovered tool
+        let allDiscoveredPaths = Set(discovered.flatMap(\.paths))
+        let customPaths = (config?.source.paths ?? []).filter { !allDiscoveredPaths.contains($0) }
+        if !customPaths.isEmpty {
+            let customItems = customPaths.map { (label: ConfigDiscovery.contract(ConfigDiscovery.expand($0)),
+                                                  paths: [$0], sensitive: false) }
+            grouped.append(("Custom Folders", customItems))
+        }
+
+        for group in grouped {
+            let catView = ToolsCategoryView(category: group.category)
+            catView.toggleDelegate = self
+            catView.configure(items: group.items, enabledPaths: enabledPaths)
+            catView.translatesAutoresizingMaskIntoConstraints = false
+            toolsStack.addArrangedSubview(catView)
+            categoryViews.append(catView)
         }
     }
+
+    // MARK: - ToolToggleDelegate
+
+    func toolPathToggled(_ path: String, enabled: Bool) {
+        popoverDelegate?.popoverDidTogglePath(path, enabled: enabled)
+        // Refresh immediately to update counts
+        DispatchQueue.main.async { [weak self] in self?.refresh() }
+    }
+
+    // MARK: - Disk selection
 
     private func rebuildDiskList() {
-        for v in diskStack.arrangedSubviews { diskStack.removeArrangedSubview(v); v.removeFromSuperview() }
-
+        diskStack.arrangedSubviews.forEach { diskStack.removeArrangedSubview($0); $0.removeFromSuperview() }
         let volumes = discoverVolumes()
         if volumes.isEmpty {
-            let label = NSTextField(labelWithString: "No external disk connected")
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = MLColor.error
-            diskStack.addArrangedSubview(label)
+            let lbl = NSTextField(labelWithString: "No external disk connected")
+            lbl.font = .systemFont(ofSize: 11)
+            lbl.textColor = MLColor.error
+            diskStack.addArrangedSubview(lbl)
             return
         }
-
-        for volume in volumes {
-            let (free, total) = DiskDiagnostics.diskSpace(at: volume.path)
-            let freeGB = free / 1_073_741_824
-            let totalGB = total / 1_073_741_824
-            let title = "\(volume.lastPathComponent)  --  \(freeGB) / \(totalGB) GB"
-            let btn = NSButton(title: title, target: self, action: #selector(diskSelected(_:)))
+        for (i, vol) in volumes.enumerated() {
+            let (free, total) = DiskDiagnostics.diskSpace(at: vol.path)
+            let btn = NSButton(title: "\(vol.lastPathComponent)  --  \(free / 1_073_741_824) / \(total / 1_073_741_824) GB",
+                               target: self, action: #selector(diskSelected(_:)))
             btn.bezelStyle = .rounded
             btn.font = .systemFont(ofSize: 12)
-            btn.tag = volumes.firstIndex(of: volume) ?? 0
+            btn.tag = i
             btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.widthAnchor.constraint(equalToConstant: 270).isActive = true
+            btn.widthAnchor.constraint(equalToConstant: 272).isActive = true
             diskStack.addArrangedSubview(btn)
         }
     }
 
     private func discoverVolumes() -> [URL] {
-        let fm = FileManager.default
-        guard let volumes = fm.mountedVolumeURLs(
+        guard let vols = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: [.volumeNameKey],
             options: [.skipHiddenVolumes]) else { return [] }
-        return volumes.filter { u in
+        return vols.filter { u in
             let p = u.path
             return p != "/" && p != "/System/Volumes/Data"
                 && u.lastPathComponent != "Macintosh HD" && p.hasPrefix("/Volumes/")
         }
     }
 
-    @objc private func diskSelected(_ sender: NSButton) {
-        let volumes = discoverVolumes()
-        guard sender.tag < volumes.count else { return }
-        popoverDelegate?.popoverDidSelectDisk(volumes[sender.tag])
-    }
-
     // MARK: - Actions
 
+    @objc private func diskSelected(_ sender: NSButton) {
+        let vols = discoverVolumes()
+        guard sender.tag < vols.count else { return }
+        popoverDelegate?.popoverDidSelectDisk(vols[sender.tag])
+    }
+
     @objc private func backupTapped() {
-        guard let delegate = popoverDelegate else { return }
-        if delegate.popoverGetState() == .running {
-            delegate.popoverDidRequestStop()
-        } else {
-            delegate.popoverDidRequestBackup()
-        }
+        guard let d = popoverDelegate else { return }
+        d.popoverGetState() == .running ? d.popoverDidRequestStop() : d.popoverDidRequestBackup()
     }
 
-    @objc private func addFolderTapped() {
-        popoverDelegate?.popoverDidRequestAddFolder()
-    }
+    @objc private func addFolderTapped() { popoverDelegate?.popoverDidRequestAddFolder() }
+    @objc private func openFolderTapped() { popoverDelegate?.popoverDidRequestOpenFolder() }
+    @objc private func ejectTapped() { popoverDelegate?.popoverDidRequestEject() }
+    @objc private func quitTapped() { popoverDelegate?.popoverDidRequestQuit() }
 
-    @objc private func openFolderTapped() {
-        popoverDelegate?.popoverDidRequestOpenFolder()
-    }
+    // MARK: - Layout
 
-    @objc private func ejectTapped() {
-        popoverDelegate?.popoverDidRequestEject()
-    }
-
-    @objc private func quitTapped() {
-        popoverDelegate?.popoverDidRequestQuit()
-    }
-
-    // MARK: - Layout helpers
-
-    private func addRow(_ v: NSView) {
+    private func addToOuter(_ v: NSView) {
         v.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(v)
-        if let textField = v as? NSTextField {
-            textField.widthAnchor.constraint(lessThanOrEqualToConstant: 288).isActive = true
-        }
+        outerStack.addArrangedSubview(v)
     }
 
-    private func addSeparator() {
-        let sep = NSBox()
-        sep.boxType = .separator
+    private func addSep() {
+        let sep = NSBox(); sep.boxType = .separator
         sep.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(sep)
-        sep.widthAnchor.constraint(equalToConstant: 288).isActive = true
+        outerStack.addArrangedSubview(sep)
+        sep.widthAnchor.constraint(equalToConstant: 292).isActive = true
     }
 
-    private func addActionRow(_ title: String, icon: String, action: Selector, key: String = "") {
+    private func addAction(_ title: String, icon: String, action: Selector, key: String = "") {
         let btn = NSButton(title: title, target: self, action: action)
-        btn.bezelStyle = .inline
-        btn.font = .systemFont(ofSize: 13)
-        btn.isBordered = false
-        btn.alignment = .left
+        btn.bezelStyle = .inline; btn.isBordered = false
+        btn.font = .systemFont(ofSize: 13); btn.alignment = .left
         btn.keyEquivalent = key
         if !key.isEmpty { btn.keyEquivalentModifierMask = .command }
         if let img = NSImage(systemSymbolName: icon, accessibilityDescription: title) {
-            btn.image = img
-            btn.imagePosition = .imageLeading
+            btn.image = img; btn.imagePosition = .imageLeading
         }
-        addRow(btn)
+        addToOuter(btn)
     }
 
     private func makeRow() -> NSStackView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalToConstant: 288).isActive = true
-        return row
+        let r = NSStackView(); r.orientation = .horizontal
+        r.alignment = .centerY; r.spacing = 8
+        r.translatesAutoresizingMaskIntoConstraints = false
+        r.widthAnchor.constraint(equalToConstant: 292).isActive = true
+        return r
     }
 
-    private func spacer() -> NSView {
-        let s = NSView()
-        s.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return s
+    private func hSpacer() -> NSView {
+        let s = NSView(); s.setContentHuggingPriority(.defaultLow, for: .horizontal); return s
+    }
+
+    private func pin(_ child: NSView, to parent: NSView) {
+        NSLayoutConstraint.activate([
+            child.topAnchor.constraint(equalTo: parent.topAnchor),
+            child.bottomAnchor.constraint(equalTo: parent.bottomAnchor),
+            child.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: parent.trailingAnchor),
+        ])
     }
 }
