@@ -267,8 +267,8 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         // Undo restore -- visible only if pre-restore backups exist
         undoRestoreButton?.isHidden = !RestoreEngine.hasPreRestoreBackup()
 
-        // Tools -- only rebuild if not running (avoid flicker)
-        if !running { rebuildToolsList(config: config) }
+        // Tools -- rebuild list (skip during running to avoid flicker, but show if empty)
+        if !running || categoryViews.isEmpty { rebuildToolsList(config: config) }
     }
 
     // MARK: - Tools list with categories
