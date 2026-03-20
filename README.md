@@ -11,7 +11,8 @@ Safe, fast backup of your dev configurations and chosen folders. A Time Machine 
 - **Incremental backups** with hard links (unchanged files = zero extra space)
 - **APFS clone support** -- instant file copies via `copyfile()` with `COPYFILE_CLONE`
 - **Parallel I/O** -- 8 concurrent workers via Swift `TaskGroup`
-- **Modern popover UI** -- NSPopover with vibrancy, folder list, progress bar
+- **SwiftUI tree view** -- collapsible categories (Shell, Git, SSH, Terminal, Editor, AI Tools, Auth, Cloud, macOS, Repos) with tri-state checkboxes
+- **Auto-update** -- checks GitHub releases on launch, downloads and installs in-place preserving FDA permissions
 - **Battery-aware** -- throttles I/O on battery, full speed on AC
 - **Symlink-safe** -- skips symbolic links to prevent loops and indirect TCC access
 - **Scheduled backups** -- via macOS LaunchAgent
@@ -46,11 +47,16 @@ System/TCC-protected paths are hardcoded as forbidden:
 ```bash
 git clone https://github.com/Roberdan/RustyMacBackup.git
 cd RustyMacBackup
-./build.sh
-cp -r build/RustyMacBackup.app /Applications/
+./install.sh          # builds + installs in-place to /Applications (FDA preserved)
 ```
 
+Or download `RustyMacBackup-2.0.0-arm64.pkg` from [Releases](https://github.com/Roberdan/RustyMacBackup/releases) and double-click.
+
 **Requirements**: macOS 14+ (Sonoma), Xcode Command Line Tools
+
+## Auto-Update
+
+The app checks GitHub releases 5 seconds after launch. When a new version is available, a blue banner appears in the popover — click **Aggiorna** to download and install in-place (no FDA permission loss).
 
 ## Quick Start
 
@@ -122,10 +128,11 @@ monthly = 0
 Launch without arguments for the popover UI:
 
 - Status icon with colored dot (green/yellow/red)
-- Folder list with count
+- **SwiftUI tree view** with collapsible categories and tri-state checkboxes per category/item
 - Progress bar + speed + ETA during backup
 - Add folders via file picker (with forbidden path enforcement)
 - Eject disk, open backup folder, quit
+- Auto-update banner when a new GitHub release is available
 
 ## Testing
 

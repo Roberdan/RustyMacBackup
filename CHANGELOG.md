@@ -1,6 +1,36 @@
 # Changelog
 
+## [2.0.1] - 2026-03-20
+
+### Fixed
+- **BackupEngine crash (EXC_BAD_ACCESS)** -- replaced `UnsafeMutablePointer<Int64>` + `defer { deallocate() }` with a heap-allocated `Counters` class; ARC now guarantees pointer lifetime matches the `Task.detached` walker closure, eliminating the use-after-free race condition that caused crashes during actual backup runs.
+
 ## [2.0.0] - 2026-03-20
+
+### SwiftUI UI Rewrite + Auto-Update
+
+Complete UI rewrite from AppKit (flat NSStackView of 400+ items) to SwiftUI tree view. Added GitHub-based auto-update pipeline.
+
+### Added
+- **SwiftUI tree view** -- collapsible categories (Shell, Git, SSH, Terminal, Editor, AI Tools, Auth, Cloud, macOS, Repos) with tri-state checkboxes (checked / unchecked / mixed via native `NSButton` `allowsMixedState`)
+- **AppUIState** -- shared `ObservableObject` bridging AppKit `AppDelegate` and SwiftUI views
+- **Auto-updater** -- checks `api.github.com/repos/roberdan/RustyMacBackup/releases/latest` on launch, downloads `.app.zip`, installs in-place via `rsync` (preserves FDA permissions), relaunches
+- **Update banner** -- blue banner in popover shows available version + spinner during download
+- **GitHub Release workflow** -- `.github/workflows/release.yml` produces `.pkg` + `.app.zip` artifacts on tag push
+- **`install.sh`** -- in-place installer: `rsync Contents/` preserves `.app` path so macOS TCC keeps FDA grant
+
+### Changed
+- `TreeWindowController` -- replaced ~365 lines of AppKit with thin `NSHostingController<TreeView>` wrapper
+- `PopoverViewController` -- replaced ~310 lines of AppKit with thin `NSHostingController<PopoverView>` wrapper
+- `AppDelegate` -- removed `PopoverDelegate`/`TreeWindowDelegate` conformances; uses closure callbacks + `AppUIState`
+- `build.sh` -- `VERSION` from env var, stamps `Info.plist` in bundle, added `-framework SwiftUI`
+- `build-pkg.sh` -- produces both `.pkg` AND `.app.zip`
+- Version bumped to 2.0.0
+
+### Removed
+- `TreeWindowDelegate` and `PopoverDelegate` protocols -- replaced by closure callbacks
+
+
 
 ### Safe Whitelist-Only Rewrite
 
