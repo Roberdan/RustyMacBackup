@@ -214,19 +214,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
     func popoverDidStartRestore(snapshotURL: URL, items: [String], brewInstall: Bool) {
         popover.performClose(nil)
         iconManager.setState(.running)
+        Log.info("Restore started: \(items.count) items from \(snapshotURL.lastPathComponent)")
+        sendNotification(title: "Restore started",
+                        body: "Restoring \(items.count) items from \(snapshotURL.lastPathComponent)...")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items)
+            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items) { item, done, total in
+                Log.info("Restoring [\(done)/\(total)] \(item)")
+            }
 
             var brewOK = true
             if brewInstall {
+                DispatchQueue.main.async {
+                    self?.sendNotification(title: "Installing Homebrew packages...",
+                                          body: "This may take a few minutes")
+                }
                 brewOK = RestoreEngine.restoreHomebrew(snapshotURL: snapshotURL)
             }
 
             DispatchQueue.main.async {
                 self?.iconManager.setState(.idle)
                 let brewMsg = brewInstall ? (brewOK ? "\nHomebrew packages restored." : "\nHomebrew restore had errors.") : ""
-                let backupMsg = result.backedUpTo.isEmpty ? "" : "\nPre-restore backup: ~/.rustybackup-pre-restore/"
+                let backupMsg = result.backedUpTo.isEmpty ? "" : "\nOriginals saved to ~/.rustybackup-pre-restore/"
+                Log.info("Restore complete: \(result.restored) restored, \(result.overwritten) overwritten, \(result.failed) failed")
                 self?.sendNotification(
                     title: "Restore complete",
                     body: "\(result.restored) restored, \(result.overwritten) overwritten, \(result.failed) failed\(brewMsg)\(backupMsg)")
@@ -246,11 +256,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         guard let backupDir = RestoreEngine.latestPreRestoreBackup() else { return }
         popover.performClose(nil)
         iconManager.setState(.running)
+        sendNotification(title: "Undoing restore...", body: "Restoring original files")
+        Log.info("Undo restore started from \(backupDir.lastPathComponent)")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = RestoreEngine.undoRestore(from: backupDir)
             DispatchQueue.main.async {
                 self?.iconManager.setState(.idle)
+                Log.info("Undo complete: \(result.restored) restored, \(result.failed) failed")
                 self?.sendNotification(
                     title: "Undo restore complete",
                     body: "\(result.restored) files restored to original state, \(result.failed) failed")
