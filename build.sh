@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="RustyMacBackup"
-VERSION="${VERSION:-2.0.0}"
+VERSION="${VERSION:-2.1.0}"
 BUILD_DIR="build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BINARY="$BUILD_DIR/$APP_NAME"

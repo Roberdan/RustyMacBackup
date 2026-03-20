@@ -58,6 +58,70 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         uiState.onSelectDisk = { [weak self] url in self?.handleSelectDisk(url) }
         uiState.onRequestUndoRestore = { [weak self] in self?.handleUndoRestore() }
         uiState.onRequestUpdate = { [weak self] in self?.handleRequestUpdate() }
+        uiState.onSetSchedule = { [weak self] option in self?.handleSetSchedule(option) }
+        uiState.onRequestScheduleMenu = { [weak self] in self?.handleRequestScheduleMenu() }
+        refreshScheduleLabel()
+    }
+
+    private func refreshScheduleLabel() {
+        let s = ScheduleManager.scheduleStatus()
+        if !s.installed {
+            uiState.scheduleLabel = "Off"
+        } else if let mins = s.intervalMinutes {
+            uiState.scheduleLabel = mins >= 60 ? "ogni \(mins / 60)h" : "ogni \(mins)min"
+        } else if let hour = s.dailyHour {
+            uiState.scheduleLabel = hour == 0 ? "mezzanotte" : "notte \(hour):00"
+        } else {
+            uiState.scheduleLabel = "On"
+        }
+    }
+
+    private func handleRequestScheduleMenu() {
+        let menu = NSMenu()
+        func item(_ title: String, opt: Int?) -> NSMenuItem {
+            let i = NSMenuItem(title: title, action: #selector(scheduleMenuAction(_:)), keyEquivalent: "")
+            i.target = self
+            i.tag = opt ?? Int.min
+            return i
+        }
+        menu.addItem(item("Disabilita schedule", opt: nil))
+        menu.addItem(.separator())
+        menu.addItem(item("Ogni ora",  opt: 60))
+        menu.addItem(item("Ogni 6 ore", opt: 360))
+        menu.addItem(.separator())
+        menu.addItem(item("Ogni notte (00:00)", opt: 0))
+        menu.addItem(item("Ogni notte (02:00)", opt: -2))
+        menu.addItem(item("Ogni notte (03:00)", opt: -3))
+
+        if let button = statusItem.button {
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: 0, y: button.frame.height + 4),
+                       in: button)
+        }
+    }
+
+    @objc private func scheduleMenuAction(_ sender: NSMenuItem) {
+        let opt: Int? = sender.tag == Int.min ? nil : sender.tag
+        handleSetSchedule(opt)
+    }
+
+    private func handleSetSchedule(_ option: Int?) {
+        do {
+            if let opt = option {
+                let plist: String
+                if opt <= 0 {
+                    plist = ScheduleManager.generatePlistDaily(hour: abs(opt))
+                } else {
+                    plist = ScheduleManager.generatePlist(intervalSeconds: opt * 60)
+                }
+                try ScheduleManager.installSchedule(plistContent: plist)
+            } else {
+                try ScheduleManager.removeSchedule()
+            }
+        } catch {
+            sendNotification(title: "Schedule error", body: error.localizedDescription)
+        }
+        refreshScheduleLabel()
     }
 
     private func deferredInit() {
@@ -157,9 +221,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func openRestoreTree(snapshotURL: URL) {
         let treeWC = TreeWindowController(
             mode: .restore(snapshotURL: snapshotURL),
-            onConfirmRestore: { [weak self] url, items, brewInstall in
+            onConfirmRestore: { [weak self] url, items, brewInstall, overrides in
                 self?.treeWindowController = nil
-                self?.startRestore(snapshotURL: url, items: items, brewInstall: brewInstall)
+                self?.startRestore(snapshotURL: url, items: items, brewInstall: brewInstall, overrides: overrides)
             }
         )
         treeWC.showWindow(nil)
@@ -258,26 +322,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pollStatus()
     }
 
-    private func startRestore(snapshotURL: URL, items: [String], brewInstall: Bool) {
-        popover.performClose(nil)
+    private func startRestore(snapshotURL: URL, items: [String], brewInstall: Bool, overrides: [String: String] = [:]) {
         iconManager.setState(.running)
         uiState.appState = .running
         Log.info("Restore started: \(items.count) items from \(snapshotURL.lastPathComponent)")
-        sendNotification(title: "Restore started",
-                         body: "Restoring \(items.count) items from \(snapshotURL.lastPathComponent)…")
+        sendNotification(title: "Restore avviato",
+                         body: "Ripristino \(items.count) elementi da \(snapshotURL.lastPathComponent)…")
+
+        // Reopen popover so user can see progress bar
+        if let button = statusItem.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items) { item, done, total in
-                Log.info("Restoring [\(done)/\(total)] \(item)")
-            }
-
+            // 1. Brew FIRST — installs missing tools before restoring their configs
             var brewOK = true
             if brewInstall {
                 DispatchQueue.main.async {
-                    self?.sendNotification(title: "Installing Homebrew packages…",
-                                           body: "This may take a few minutes")
+                    self?.sendNotification(title: "Homebrew packages…",
+                                           body: "Installing packages (may take a few minutes)…")
+                    if var s = self?.uiState.status {
+                        s.currentFile = "Installing Homebrew packages…"
+                        self?.uiState.status = s
+                    }
                 }
                 brewOK = RestoreEngine.restoreHomebrew(snapshotURL: snapshotURL)
+            }
+
+            // 2. Restore files
+            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items,
+                                               destinationOverrides: overrides) { item, done, total in
+                Log.info("Restoring [\(done)/\(total)] \(item)")
+                DispatchQueue.main.async {
+                    guard var s = self?.uiState.status else { return }
+                    s.state = "running"
+                    s.currentFile = item
+                    s.filesDone = UInt64(done)
+                    s.filesTotal = UInt64(total)
+                    s.bytesCopied = 0
+                    self?.uiState.status = s
+                }
             }
 
             DispatchQueue.main.async {

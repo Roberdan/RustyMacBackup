@@ -70,7 +70,11 @@ enum BackupEngine {
         try? statusWriter.write(status: status)
 
         let excludeFilter = ExcludeFilter(patterns: config.exclude.patterns)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         let sourceURLs = allPaths.map { URL(fileURLWithPath: $0) }
+        // Always use HOME as basePath so snapshot preserves full relative paths:
+        // ~/GitHub/MyRepo/file.swift → snapshot/GitHub/MyRepo/file.swift
+        let homeBasePaths = Array(repeating: home, count: sourceURLs.count)
 
         // Use a class (heap ref) instead of UnsafeMutablePointer — ARC keeps it alive
         // for as long as the walkerTask closure references it, preventing use-after-free.
@@ -83,7 +87,7 @@ enum BackupEngine {
         let (stream, continuation) = AsyncStream<FileEntry>.makeStream(bufferingPolicy: .bufferingNewest(256))
 
         let walkerTask = Task.detached(priority: .utility) {
-            FileScanner.walk(sources: sourceURLs, basePaths: allPaths,
+            FileScanner.walk(sources: sourceURLs, basePaths: homeBasePaths,
                            excludeFilter: excludeFilter) { entry in
                 if shouldCancel { return false }
                 counters.discovered += 1

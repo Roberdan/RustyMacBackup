@@ -22,7 +22,7 @@ class TreeWindowController: NSWindowController {
     init(mode: TreeWindowMode,
          enabledPaths: Set<String> = [],
          onConfirmBackup: @escaping ([String]) -> Void = { _ in },
-         onConfirmRestore: @escaping (URL, [String], Bool) -> Void = { _, _, _ in }) {
+         onConfirmRestore: @escaping (URL, [String], Bool, [String: String]) -> Void = { _, _, _, _ in }) {
 
         let model = TreeSelectionModel(mode: mode, enabledPaths: enabledPaths)
         model.onConfirmBackup = onConfirmBackup
@@ -54,9 +54,40 @@ class TreeWindowController: NSWindowController {
             self?.window?.close()
             onConfirmBackup(paths)
         }
-        model.onConfirmRestore = { [weak self, onConfirmRestore] url, items, brew in
+        model.onConfirmRestore = { [weak self, onConfirmRestore] url, items, brew, overrides in
             self?.window?.close()
-            onConfirmRestore(url, items, brew)
+            onConfirmRestore(url, items, brew, overrides)
+        }
+
+        model.onRequestAddPath = { [weak window] in
+            guard let win = window else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = true
+            panel.message = "Seleziona cartelle o file da aggiungere al backup"
+            panel.prompt = "Aggiungi"
+            panel.beginSheetModal(for: win) { result in
+                guard result == .OK else { return }
+                for url in panel.urls {
+                    let contracted = ConfigDiscovery.contract(url.path)
+                    Task { @MainActor in model.addCustomPath(contracted) }
+                }
+            }
+        }
+
+        model.onRequestChangeDestination = { [weak window] _, completion in
+            guard let win = window else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.message = "Scegli dove ripristinare questo elemento"
+            panel.prompt = "Scegli"
+            panel.beginSheetModal(for: win) { result in
+                guard result == .OK, let url = panel.url else { return }
+                completion(ConfigDiscovery.contract(url.path))
+            }
         }
     }
 

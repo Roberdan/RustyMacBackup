@@ -23,8 +23,17 @@ class StatusManager {
         lastStatus = statusWriter.read()
 
         if !FileManager.default.fileExists(atPath: config.destination.path) {
-            currentState = .diskAbsent
-            return currentState
+            // Disk might be mounted but folder deleted — try to recreate it
+            let destURL = URL(fileURLWithPath: config.destination.path)
+            let parentExists = FileManager.default.fileExists(atPath: destURL.deletingLastPathComponent().path)
+            if parentExists {
+                try? FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+            }
+            // Re-check after potential creation
+            if !FileManager.default.fileExists(atPath: config.destination.path) {
+                currentState = .diskAbsent
+                return currentState
+            }
         }
 
         if let status = lastStatus {

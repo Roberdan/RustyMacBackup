@@ -24,16 +24,20 @@ struct CategoryInfo: Identifiable {
 @MainActor
 final class TreeSelectionModel: ObservableObject {
     let mode: TreeWindowMode
-    let categories: [CategoryInfo]
+    @Published var categories: [CategoryInfo]
     let hasBrewfile: Bool
 
     @Published var checkedPaths: Set<String>
     @Published var expandedCategories: Set<String>
     @Published var brewInstall: Bool = true
+    /// Override restore destination: maps primaryPath → custom dest (~/…)
+    @Published var destinationOverrides: [String: String] = [:]
 
     var onConfirmBackup: (([String]) -> Void)?
-    var onConfirmRestore: ((URL, [String], Bool) -> Void)?
+    var onConfirmRestore: ((URL, [String], Bool, [String: String]) -> Void)?
     var onCancel: (() -> Void)?
+    var onRequestAddPath: (() -> Void)?
+    var onRequestChangeDestination: ((ItemInfo, @escaping (String) -> Void) -> Void)?
 
     init(mode: TreeWindowMode, enabledPaths: Set<String> = []) {
         self.mode = mode
@@ -65,32 +69,77 @@ final class TreeSelectionModel: ObservableObject {
             hasBrewfile = false
 
         case .restore(let snapshotURL):
-            let items = RestoreEngine.scanSnapshot(at: snapshotURL)
-            var dotfiles: [ItemInfo] = []
-            var folders: [ItemInfo] = []
-            var initialChecked: Set<String> = []
+            // Scan snapshot top-level to know what's available
+            let snapshotItems = RestoreEngine.scanSnapshot(at: snapshotURL)
+            let snapshotTopLevel = Set(snapshotItems.map { $0.relativePath })
 
-            for item in items {
-                let info = ItemInfo(paths: ["~/\(item.relativePath)"],
-                                    label: item.relativePath,
-                                    sensitive: false, isConflict: item.existsAtDest)
-                if item.relativePath.hasPrefix(".") && !item.isDirectory {
-                    dotfiles.append(info)
-                } else {
-                    folders.append(info)
+            // Use candidatesForRestore: matches against snapshot WITHOUT requiring
+            // files to exist on this machine (works on a fresh/different Mac)
+            let discovered = ConfigDiscovery.candidatesForRestore(snapshotTopLevels: snapshotTopLevel)
+            var catMap: [String: [ItemInfo]] = [:]
+            var catOrder: [String] = []
+            var initialChecked: Set<String> = []
+            var coveredTopLevels = Set<String>()
+
+            for item in discovered {
+                for path in item.paths {
+                    let rel = path.hasPrefix("~/") ? String(path.dropFirst(2)) : path
+                    if let slash = rel.firstIndex(of: "/") {
+                        coveredTopLevels.insert(String(rel[rel.startIndex..<slash]))
+                    } else {
+                        coveredTopLevels.insert(rel)
+                    }
                 }
-                initialChecked.insert("~/\(item.relativePath)")
+                let hasConflict = item.paths.contains {
+                    FileManager.default.fileExists(atPath: NSString(string: $0).expandingTildeInPath)
+                }
+                if catMap[item.category] == nil { catOrder.append(item.category); catMap[item.category] = [] }
+                catMap[item.category]!.append(
+                    ItemInfo(paths: item.paths, label: item.label,
+                             sensitive: item.sensitive, isConflict: hasConflict)
+                )
+                item.paths.forEach { initialChecked.insert($0) }
             }
 
-            var cats: [CategoryInfo] = []
-            if !dotfiles.isEmpty { cats.append(CategoryInfo(name: "Dotfiles", items: dotfiles)) }
-            if !folders.isEmpty  { cats.append(CategoryInfo(name: "Folders & Repos", items: folders)) }
-            categories = cats
-            checkedPaths = initialChecked
-            expandedCategories = Set(cats.map(\.name))  // expanded by default in restore mode
+            // Repos: scan snapshot subdirs for GitHub/Developer/Projects
+            let repoParents = ["GitHub", "Developer", "Projects"]
+            for parentName in repoParents where snapshotTopLevel.contains(parentName) {
+                coveredTopLevels.insert(parentName)
+                let parentURL = snapshotURL.appendingPathComponent(parentName)
+                let repos = (try? FileManager.default.contentsOfDirectory(
+                    at: parentURL, includingPropertiesForKeys: [.isDirectoryKey], options: []
+                )) ?? []
+                for repoURL in repos.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                    let name = repoURL.lastPathComponent
+                    let path = "~/\(parentName)/\(name)"
+                    let hasConflict = FileManager.default.fileExists(
+                        atPath: NSString(string: path).expandingTildeInPath)
+                    if catMap["Repos"] == nil { catOrder.append("Repos"); catMap["Repos"] = [] }
+                    catMap["Repos"]!.append(
+                        ItemInfo(paths: [path], label: "\(parentName)/\(name)",
+                                 sensitive: false, isConflict: hasConflict)
+                    )
+                    initialChecked.insert(path)
+                }
+            }
 
-            let brewPath = snapshotURL.appendingPathComponent("_environment/Brewfile").path
-            hasBrewfile = FileManager.default.fileExists(atPath: brewPath)
+            // Anything in snapshot not matched by known categories → "Custom"
+            for snapshotItem in snapshotItems where !coveredTopLevels.contains(snapshotItem.relativePath) {
+                if catMap["Custom"] == nil { catOrder.append("Custom"); catMap["Custom"] = [] }
+                let path = "~/\(snapshotItem.relativePath)"
+                catMap["Custom"]!.append(
+                    ItemInfo(paths: [path], label: snapshotItem.relativePath,
+                             sensitive: false, isConflict: snapshotItem.existsAtDest)
+                )
+                initialChecked.insert(path)
+            }
+
+            categories = catOrder.map { CategoryInfo(name: $0, items: catMap[$0]!) }
+            checkedPaths = initialChecked
+            expandedCategories = Set(catOrder)
+            hasBrewfile = FileManager.default.fileExists(
+                atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path
+            )
         }
     }
 
@@ -129,6 +178,19 @@ final class TreeSelectionModel: ObservableObject {
     func toggleItem(_ item: ItemInfo) {
         if isItemChecked(item) { item.paths.forEach { checkedPaths.remove($0) } }
         else                   { item.paths.forEach { checkedPaths.insert($0) } }
+    }
+
+    func addCustomPath(_ path: String) {
+        let label = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).lastPathComponent
+        let info = ItemInfo(paths: [path], label: label, sensitive: false, isConflict:
+            FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath))
+        if let idx = categories.firstIndex(where: { $0.name == "Custom" }) {
+            categories[idx] = CategoryInfo(name: "Custom", items: categories[idx].items + [info])
+        } else {
+            categories.append(CategoryInfo(name: "Custom", items: [info]))
+            expandedCategories.insert("Custom")
+        }
+        checkedPaths.insert(path)
     }
 
     func selectAll()    { categories.flatMap(\.items).flatMap(\.paths).forEach { checkedPaths.insert($0) } }
@@ -228,9 +290,37 @@ struct ItemRow: View {
             .toggleStyle(.checkbox)
             .labelsHidden()
 
-            Text(item.label)
-                .font(.system(size: 12))
-                .lineLimit(1)
+            if case .restore = model.mode {
+                // In restore mode: show label + destination path below
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.label)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                    // Destination path — tappable to change
+                    HStack(spacing: 3) {
+                        let dest = model.destinationOverrides[item.primaryPath] ?? item.paths.first ?? ""
+                        Text(dest.count > 42 ? "…" + String(dest.suffix(40)) : dest)
+                            .font(.system(size: 10))
+                            .foregroundColor(item.isConflict ? .mlRosso.opacity(0.8) : Color(.tertiaryLabelColor))
+                            .lineLimit(1)
+                        Button {
+                            model.onRequestChangeDestination?(item) { newDest in
+                                model.destinationOverrides[item.primaryPath] = newDest
+                            }
+                        } label: {
+                            Image(systemName: "arrow.triangle.turn.up.right.circle")
+                                .font(.system(size: 9))
+                                .foregroundColor(.mlInfo)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cambia destinazione")
+                    }
+                }
+            } else {
+                Text(item.label)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+            }
 
             Spacer(minLength: 4)
 
@@ -244,18 +334,24 @@ struct ItemRow: View {
             }
 
             if case .restore = model.mode {
-                Text(item.isConflict ? "overwrite" : "new")
-                    .font(.system(size: 9))
+                Text(item.isConflict ? "⚠ sovrascrive" : "✚ nuovo")
+                    .font(.system(size: 9).weight(.medium))
                     .foregroundColor(item.isConflict ? .mlRosso : .mlVerde)
+            } else {
+                Text(shortPath(item.primaryPath))
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(.tertiaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 180, alignment: .trailing)
             }
-
-            Text(shortPath(item.primaryPath))
-                .font(.system(size: 10))
-                .foregroundColor(Color(.tertiaryLabelColor))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 180, alignment: .trailing)
         }
+    }
+
+    /// First destination path, shortened for display
+    private var destPath: String {
+        let p = item.paths.first ?? ""
+        return p.count > 42 ? "…" + String(p.suffix(40)) : p
     }
 
     private func shortPath(_ p: String) -> String {
@@ -291,6 +387,18 @@ struct TreeView: View {
                     } label: {
                         CategoryHeaderRow(category: category, model: model)
                     }
+                }
+                if model.mode.isBackup {
+                    Button {
+                        model.onRequestAddPath?()
+                    } label: {
+                        Label("Aggiungi cartella o file…", systemImage: "plus.circle")
+                            .font(.system(size: 12))
+                            .foregroundColor(.mlInfo)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 4)
+                    .padding(.leading, 20)
                 }
             }
             .listStyle(.inset)
@@ -374,9 +482,17 @@ struct TreeView: View {
 
     private func confirmRestore() {
         guard case .restore(let url) = model.mode else { return }
+        // RestoreEngine expects relative paths WITHOUT "~/" prefix
         let items = model.categories.flatMap(\.items)
             .filter { model.isItemChecked($0) }.flatMap(\.paths)
-        model.onConfirmRestore?(url, items, model.brewInstall)
+            .map { $0.hasPrefix("~/") ? String($0.dropFirst(2)) : $0 }
+        // Build destination overrides (also strip ~/)
+        var overrides: [String: String] = [:]
+        for (key, val) in model.destinationOverrides {
+            let relKey = key.hasPrefix("~/") ? String(key.dropFirst(2)) : key
+            overrides[relKey] = val
+        }
+        model.onConfirmRestore?(url, items, model.brewInstall, overrides)
     }
 }
 

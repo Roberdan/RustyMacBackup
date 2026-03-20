@@ -85,6 +85,7 @@ enum RestoreEngine {
     /// - Backs up existing files to ~/.rustybackup-pre-restore/TIMESTAMP/ before overwriting
     /// - Creates parent directories as needed
     static func restore(snapshotURL: URL, items: [String],
+                        destinationOverrides: [String: String] = [:],
                         progress: ((String, Int, Int) -> Void)? = nil) -> RestoreResult {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
@@ -96,7 +97,15 @@ enum RestoreEngine {
 
         for (i, rel) in items.enumerated() {
             let source = snapshotURL.appendingPathComponent(rel)
-            let dest = URL(fileURLWithPath: home + "/" + rel)
+            // Use custom destination if specified, otherwise default home-relative
+            let dest: URL
+            if let customDest = destinationOverrides[rel] {
+                let expanded = NSString(string: customDest).expandingTildeInPath
+                dest = URL(fileURLWithPath: expanded)
+                    .appendingPathComponent(URL(fileURLWithPath: rel).lastPathComponent)
+            } else {
+                dest = URL(fileURLWithPath: home + "/" + rel)
+            }
             progress?(rel, i + 1, total)
 
             do {

@@ -28,6 +28,8 @@ enum FileScanner {
         let keySet = Set(keys)
 
         for (index, source) in sources.enumerated() {
+            // Always use HOME as base — ensures snapshot preserves full relative paths
+            // e.g. ~/GitHub/MyRepo/file.swift → "GitHub/MyRepo/file.swift" (not "file.swift")
             let basePath = basePaths[index].hasSuffix("/") ? basePaths[index] : basePaths[index] + "/"
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
 
@@ -35,13 +37,19 @@ enum FileScanner {
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: source.path, isDirectory: &isDir)
             if !isDir.boolValue {
-                // Single file backup (e.g. ~/.zshrc)
                 guard let values = try? source.resourceValues(forKeys: keySet),
                       values.isSymbolicLink != true,
                       let size = values.fileSize,
                       let mtime = values.contentModificationDate else { continue }
+                // Use home-relative path for single files too
+                let rel: String
+                if source.path.hasPrefix(basePath) {
+                    rel = String(source.path.dropFirst(basePath.count))
+                } else {
+                    rel = source.lastPathComponent
+                }
                 let entry = FileEntry(
-                    relativePath: source.lastPathComponent,
+                    relativePath: rel,
                     absolutePath: source.path,
                     size: UInt64(size),
                     mtime: mtime

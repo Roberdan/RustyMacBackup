@@ -244,6 +244,8 @@ enum ConfigDiscovery {
         ("Cloud", "GCP config", ["~/.config/gcloud/properties"], false),
         ("Cloud", "Azure config", ["~/.azure/config"], false),
         ("Cloud", "Stripe config", ["~/.config/stripe"], false),
+        ("Cloud", "Tailscale prefs", ["~/Library/Preferences/io.tailscale.ipn.macos.plist",
+                                       "~/Library/Application Support/Tailscale"], false),
 
         // macOS Preferences (safe plist files -- read-only copies)
         ("macOS", "Keyboard shortcuts", ["~/Library/Preferences/com.apple.symbolichotkeys.plist"], false),
@@ -254,6 +256,32 @@ enum ConfigDiscovery {
         ("macOS", "Custom dictionary", ["~/Library/Spelling/LocalDictionary"], false),
         ("macOS", "Custom fonts", ["~/Library/Fonts"], false),
     ]
+
+    // MARK: - Restore discovery
+
+    /// Returns candidates whose paths are present in the given snapshot.
+    /// Unlike discover(), does NOT require files to exist on the current machine —
+    /// safe for cross-machine restore (fresh Mac).
+    static func candidatesForRestore(snapshotTopLevels: Set<String>) -> [DiscoveredConfig] {
+        var found: [DiscoveredConfig] = []
+        for candidate in builtinCandidates {
+            let inSnapshot = candidate.paths.filter { path in
+                let rel = path.hasPrefix("~/") ? String(path.dropFirst(2)) : path
+                let top: String
+                if let slash = rel.firstIndex(of: "/") {
+                    top = String(rel[rel.startIndex..<slash])
+                } else {
+                    top = rel
+                }
+                return snapshotTopLevels.contains(top)
+            }
+            if !inSnapshot.isEmpty {
+                found.append(DiscoveredConfig(category: candidate.category, label: candidate.label,
+                                              paths: inSnapshot, sensitive: candidate.sensitive))
+            }
+        }
+        return found
+    }
 
     // MARK: - Forbidden paths
 

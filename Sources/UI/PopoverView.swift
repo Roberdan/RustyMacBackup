@@ -217,7 +217,7 @@ struct PopoverView: View {
                 actionButton("Backup…", icon: "arrow.up.doc") { state.onRequestBackup?() }
             }
             if state.isRunning {
-                actionButton("Stop Backup", icon: "stop.circle", tint: .mlRosso) { state.onRequestStop?() }
+                actionButton("Stop", icon: "stop.circle", tint: .mlRosso) { state.onRequestStop?() }
             }
             if state.hasBackups {
                 actionButton("Restore…", icon: "arrow.down.doc") { state.onRequestRestore?() }
@@ -227,10 +227,20 @@ struct PopoverView: View {
                     state.onRequestUndoRestore?()
                 }
             }
+            scheduleRow
             actionButton("Open Backup Folder", icon: "folder") { state.onRequestOpenFolder?() }
             actionButton("Eject Disk", icon: "eject") { state.onRequestEject?() }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var scheduleRow: some View {
+        if state.onRequestScheduleMenu != nil {
+            actionButton("Schedule: \(state.scheduleLabel)", icon: "clock") {
+                state.onRequestScheduleMenu?()
+            }
+        }
     }
 
     private var footerSection: some View {

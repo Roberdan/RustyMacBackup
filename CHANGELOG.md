@@ -1,6 +1,31 @@
 # Changelog
 
-## [2.0.1] - 2026-03-20
+## [2.1.0] - 2026-03-20
+
+### Fixed
+- **Snapshot path structure (CRITICAL)** -- `FileScanner` now uses the home directory as the base path for all sources. Previously each source path was used as its own base, causing all files to be stored flat in the snapshot root (e.g. `~/GitHub/MyRepo/file.swift` → `snapshot/file.swift`). Now stored as `snapshot/GitHub/MyRepo/file.swift`. This fix is required for cross-machine restore to work correctly.
+- **Restore on different Mac** -- replaced `ConfigDiscovery.discover()` (filters by file existence) with new `ConfigDiscovery.candidatesForRestore(snapshotTopLevels:)` that matches against snapshot contents without requiring files to exist on the target machine.
+- **Restore `~/` path bug** -- `confirmRestore()` now strips `~/` prefix before passing paths to `RestoreEngine` (was causing `snapshot/~/.gitconfig` lookups that always failed).
+- **Restore UI categories** -- restore tree now shows the same categories as backup (Shell, Git, SSH, etc.) instead of flat "Dotfiles / Folders & Repos".
+- **Repo restore** -- GitHub/Developer/Projects repos are scanned directly from snapshot subdirectories and shown individually in the "Repos" category.
+- **Restore destination display** -- each restore item now shows destination path and `✚ nuovo` / `⚠ sovrascrive` badge.
+- **Restore order** -- Homebrew packages are now installed *before* restoring config files (tools must exist before their config).
+- **Restore progress** -- popover reopens automatically during restore to show live `[X/N] filename` progress bar.
+- **StatusManager auto-create** -- if backup disk is mounted but the `RustyMacBackup/` folder was deleted, it is recreated automatically instead of showing NO DISK.
+- **Stale lock detection** -- StatusManager verifies PID liveness with `kill(pid, 0)` to remove locks left by crashed processes.
+- **"No backups yet"** -- synthesizes `lastCompleted` from snapshot folder names on disk when `status.json` is missing.
+- **Tailscale** -- added to Cloud category in ConfigDiscovery (`~/Library/Preferences/io.tailscale.ipn.macos.plist` + `~/Library/Application Support/Tailscale`).
+
+### Added
+- **Add custom paths to backup** -- "＋ Aggiungi cartella o file…" button in backup tree opens NSOpenPanel; selected paths added to "Custom" category and saved to config.
+- **Custom restore destination** -- each restore item has an ↗ button to redirect it to a different folder on the target machine (e.g. restore `~/Downloads` to `~/Documents/OldDownloads`).
+- **Snapshot picker** -- when multiple snapshots exist, shows a picker with human-readable dates and "Ultimo" badge before opening the restore tree.
+- **Schedule UI** -- "Schedule: Off/ogni 1h/…" button in popover wired to `launchd` via `ScheduleManager`; options: disable, hourly, every 6h, nightly at 00:00/02:00/03:00.
+- **Parallel backup workers** -- `withThrowingTaskGroup` with 8 concurrent workers replaces sequential `for-await` loop (~2x throughput improvement).
+- **Adaptive I/O throttle** -- `IOPOL_DEFAULT` on AC power, `IOPOL_THROTTLE` on battery; bird-safe pause 5ms on AC vs 100ms on battery.
+- **`install.sh` syncs to backup disk** -- copies `.app` and latest `.pkg` to backup destination after every install.
+
+
 
 ### Fixed
 - **BackupEngine crash (EXC_BAD_ACCESS)** -- replaced `UnsafeMutablePointer<Int64>` + `defer { deallocate() }` with a heap-allocated `Counters` class; ARC now guarantees pointer lifetime matches the `Task.detached` walker closure, eliminating the use-after-free race condition that caused crashes during actual backup runs.
