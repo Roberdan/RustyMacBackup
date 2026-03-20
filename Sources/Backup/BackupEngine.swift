@@ -97,63 +97,87 @@ enum BackupEngine {
         var stats = BackupStats()
         var errorList: [(path: String, error: Error)] = []
         var processedCount: UInt64 = 0
-
-        // Sequential processing -- one file at a time to avoid triggering bird/iCloud
         var vanishedCount = 0
         let VANISHED_THRESHOLD = 3
+        let maxWorkers = 8  // per spec: TaskGroup concurrency limit
 
-        for await file in stream {
-            if shouldCancel { break }
-            processedCount += 1
-
-            // Disk check
-            if processedCount % UInt64(DISK_CHECK_INTERVAL) == 0 {
-                guard FileManager.default.fileExists(atPath: inProgressURL.path) else {
-                    throw BackupError.diskDisconnected
-                }
-            }
-
-            // Emergency stop: if source files are vanishing, bird is evicting
-            if vanishedCount >= VANISHED_THRESHOLD {
-                Log.error("EMERGENCY STOP: \(vanishedCount) source files vanished during backup -- bird eviction suspected")
-                status.state = "error"
-                status.currentFile = "STOPPED: source files vanishing (iCloud eviction)"
-                try? statusWriter.write(status: status)
-                throw BackupError.sourceFilesVanishing
-            }
-
-            let destFile = inProgressURL.appendingPathComponent(file.relativePath).path
-            let prevFile = latestBackup.map { $0.appendingPathComponent(file.relativePath).path }
-
-            let result = await processFile(entry: file, destFile: destFile, prevFile: prevFile)
+        // Helper: post-copy checks and stats merge (called from main task only — no data races)
+        func handleResult(_ result: FileResult, entry: FileEntry) {
             processResult(result, stats: &stats, errors: &errorList)
-
-            // Post-copy verification: check source still exists
-            // Skip shell dotfiles (can be temporarily absent during shell init)
-            let isShellFile = file.relativePath.hasSuffix("shrc") || file.relativePath.hasSuffix("profile")
-                || file.relativePath.hasSuffix("shenv") || file.relativePath.hasSuffix("history")
-            if !isShellFile && !FileManager.default.fileExists(atPath: file.absolutePath) {
+            let isShellFile = entry.relativePath.hasSuffix("shrc") || entry.relativePath.hasSuffix("profile")
+                || entry.relativePath.hasSuffix("shenv") || entry.relativePath.hasSuffix("history")
+            if !isShellFile && !FileManager.default.fileExists(atPath: entry.absolutePath) {
                 vanishedCount += 1
-                Log.warn("Source file vanished after copy: \(file.relativePath) (\(vanishedCount)/\(VANISHED_THRESHOLD))")
+                Log.warn("Source file vanished after copy: \(entry.relativePath) (\(vanishedCount)/\(VANISHED_THRESHOLD))")
+            }
+        }
+
+        // Parallel file processing with bounded TaskGroup (spec: 8 workers).
+        // processFile is safe to parallelize: each call uses a unique destFile path,
+        // createDirectory(withIntermediateDirectories:true) is safe for concurrent calls,
+        // HardLinker uses COPYFILE_ALL (no COPYFILE_CLONE — see HardLinker.swift note).
+        // All shared state (stats, errorList, vanishedCount) is mutated in the main task only.
+        var inFlight = 0
+        try await withThrowingTaskGroup(of: (FileResult, FileEntry).self) { group in
+            for await file in stream {
+                if shouldCancel { break }
+                processedCount += 1
+
+                // Disk check (every N files, in main task — safe)
+                if processedCount % UInt64(DISK_CHECK_INTERVAL) == 0 {
+                    guard FileManager.default.fileExists(atPath: inProgressURL.path) else {
+                        throw BackupError.diskDisconnected
+                    }
+                }
+
+                // Emergency stop: source files vanishing → bird eviction suspected
+                if vanishedCount >= VANISHED_THRESHOLD {
+                    Log.error("EMERGENCY STOP: \(vanishedCount) source files vanished -- bird eviction suspected")
+                    status.state = "error"
+                    status.currentFile = "STOPPED: source files vanishing (iCloud eviction)"
+                    try? statusWriter.write(status: status)
+                    throw BackupError.sourceFilesVanishing
+                }
+
+                let destFile = inProgressURL.appendingPathComponent(file.relativePath).path
+                let prevFile = latestBackup.map { $0.appendingPathComponent(file.relativePath).path }
+
+                group.addTask {
+                    (await BackupEngine.processFile(entry: file, destFile: destFile, prevFile: prevFile), file)
+                }
+                inFlight += 1
+
+                // Drain oldest result when worker pool is full (backpressure)
+                if inFlight >= maxWorkers {
+                    if let (result, entry) = try await group.next() {
+                        inFlight -= 1
+                        handleResult(result, entry: entry)
+                    }
+                }
+
+                // Status update (uses current stream position as "current file")
+                if processedCount % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    let discovered = UInt64(counters.discovered)
+                    let done = processedCount
+                    status.filesDone = done
+                    status.filesTotal = counters.walkerDone ? discovered : discovered + 5000
+                    status.bytesCopied = stats.bytesCopied
+                    status.bytesPerSec = elapsed > 0 ? UInt64(Double(stats.bytesCopied) / elapsed) : 0
+                    if status.bytesPerSec > 0 && done > 0 {
+                        let remaining = status.filesTotal > done ? status.filesTotal - done : 0
+                        let avgBytesPerFile = stats.bytesCopied / done
+                        status.etaSecs = UInt64(remaining * avgBytesPerFile / status.bytesPerSec)
+                    }
+                    status.errors = UInt64(errorList.count)
+                    status.currentFile = file.relativePath
+                    try? statusWriter.write(status: status)
+                }
             }
 
-            // Status update
-            if processedCount % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
-                let elapsed = Date().timeIntervalSince(startTime)
-                let discovered = UInt64(counters.discovered)
-                let done = processedCount
-                status.filesDone = done
-                status.filesTotal = counters.walkerDone ? discovered : discovered + 5000
-                status.bytesCopied = stats.bytesCopied
-                status.bytesPerSec = elapsed > 0 ? UInt64(Double(stats.bytesCopied) / elapsed) : 0
-                if status.bytesPerSec > 0 && done > 0 {
-                    let remaining = status.filesTotal > done ? status.filesTotal - done : 0
-                    let avgBytesPerFile = stats.bytesCopied / done
-                    status.etaSecs = UInt64(remaining * avgBytesPerFile / status.bytesPerSec)
-                }
-                status.errors = UInt64(errorList.count)
-                status.currentFile = file.relativePath
-                try? statusWriter.write(status: status)
+            // Drain remaining in-flight tasks after stream ends
+            for try await (result, entry) in group {
+                handleResult(result, entry: entry)
             }
         }
 
