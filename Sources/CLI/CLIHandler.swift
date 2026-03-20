@@ -33,7 +33,7 @@ enum CLIHandler {
             case "restore": try runRestore(subArgs: subArgs, configPath: configPath)
             case "config": try runConfig(subArgs: subArgs, configPath: configPath)
             case "schedule": try runSchedule(subArgs: subArgs)
-            case "discover": runDiscover()
+            case "discover": try runDiscover(subArgs: subArgs)
             case "errors": runErrors(subArgs: subArgs)
             default:
                 printError("Unknown command: \(command)")
@@ -71,6 +71,7 @@ enum CLIHandler {
           config          Manage configuration
           schedule        Manage backup schedule
           discover        Show detected dev tool configs
+          discover add    Add custom discovery entry (portable across Macs)
           errors          Show backup errors
           version         Show version
           help            Show this help
@@ -81,7 +82,12 @@ enum CLIHandler {
         FileHandle.standardError.write(Data("\(red("Error")): \(message)\n".utf8))
     }
 
-    private static func runDiscover() {
+    private static func runDiscover(subArgs: [String]) throws {
+        if subArgs.first == "add" {
+            try runDiscoverAdd(subArgs: Array(subArgs.dropFirst()))
+            return
+        }
+
         let found = ConfigDiscovery.discover()
         if found.isEmpty {
             print("No dev tool configs detected.")
@@ -100,6 +106,50 @@ enum CLIHandler {
                 print("      \(path)")
             }
         }
+        print("")
+        print("Custom discovery file: \(ConfigDiscovery.customDiscoveryPath.path)")
+        print("Add custom entries: RustyMacBackup discover add \"Tool Name\" ~/.config/tool")
+    }
+
+    private static func runDiscoverAdd(subArgs: [String]) throws {
+        guard subArgs.count >= 2 else {
+            throw err("Usage: discover add \"Tool Name\" <path> [--category Cat] [--sensitive]")
+        }
+        let label = subArgs[0]
+        let path = subArgs[1]
+
+        // Safety check: never allow forbidden paths even in custom discovery
+        if ConfigDiscovery.isForbidden(path) {
+            throw err("Path is system-protected and cannot be backed up: \(path)")
+        }
+        let category = subArgs.firstIndex(of: "--category").flatMap {
+            $0 + 1 < subArgs.count ? subArgs[$0 + 1] : nil
+        } ?? "Custom"
+        let sensitive = subArgs.contains("--sensitive")
+
+        let url = ConfigDiscovery.customDiscoveryPath
+        let fm = FileManager.default
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        // Create template if doesn't exist
+        if !fm.fileExists(atPath: url.path) {
+            try ConfigDiscovery.generateCustomTemplate()
+                .write(to: url, atomically: true, encoding: .utf8)
+        }
+
+        let entry = """
+        \n[\(label)]
+        category = \(category)
+        path = \(path)
+        sensitive = \(sensitive)
+        """
+        let handle = try FileHandle(forWritingTo: url)
+        handle.seekToEndOfFile()
+        handle.write(Data(entry.utf8))
+        handle.closeFile()
+
+        print(green("Added custom discovery: \(label) -> \(path)"))
+        print("File: \(url.path)")
     }
 
     private static func runBackup(configPath: String?) throws {

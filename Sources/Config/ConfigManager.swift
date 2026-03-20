@@ -225,8 +225,13 @@ func generateDefaultConfig(backupPath: String) -> Config {
     let discovered = ConfigDiscovery.discover()
     var paths: [String] = []
     for item in discovered where !item.sensitive {
-        paths.append(contentsOf: item.paths)
+        for path in item.paths where !ConfigDiscovery.isForbidden(path) {
+            paths.append(path)
+        }
     }
+    // Always include the backup config itself (for portability)
+    paths.append("~/.config/rusty-mac-backup")
+
     // Add ~/GitHub if it exists
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     if FileManager.default.fileExists(atPath: home + "/GitHub") {
