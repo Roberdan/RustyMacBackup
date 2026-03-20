@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.2.0] - 2026-03-20
+
+### Fixed
+- **Lock file race condition** — lock format extended to `PID\nTIMESTAMP\nUUID`; stale cleanup only removes dirs older than 2 hours when no live owner is found (F-01)
+- **Cancel safety** — cancelling a backup now deletes the in-progress snapshot instead of renaming it to a corrupt final snapshot (F-02)
+- **Mount validation** — `statfs()` was returning success on stale `/Volumes/X` dirs even after disk ejection; now uses `mountedVolumeURLs()` to verify real mount (F-03)
+- **Updater rollback** — auto-updater now verifies codesign + bundle ID before installing, rolls back automatically on rsync failure (F-04)
+- **Undo restore** — restore now writes `manifest.json` with overwritten paths for precise undo; falls back to top-level scan for legacy dirs (F-05)
+- **Traversal errors surfaced** — `FileScanner` now calls `onTraversalError` callback instead of silently swallowing directory read errors (F-08)
+- **Status write errors** — critical status file writes no longer silently fail; errors are logged (F-09)
+- **Free space preflight** — restore checks available disk space before starting (F-10)
+- **LaunchAgent scheduler** — migrated from deprecated `launchctl load/unload` to `launchctl bootstrap/bootout` (F-11)
+- **Version string** — CLI `--version` now reads from `Bundle` instead of a hardcoded "2.0.0" (F-12)
+- **`~/` directory in repo** — accidental `~/` directory committed to repo root removed; added to `.gitignore` (F-13)
+- **HardLinker mtime tolerance** — reduced from 1 second to 1 millisecond to avoid false cache hits on fast filesystems (F-07)
+- **README false claim** — removed statement that COPYFILE_CLONE (APFS cloning) is used; it is explicitly forbidden as it performs a destructive move across volumes (F-23)
+
+### Added
+- **Transient UI states** — `.stopping` and `.restoring` app states prevent status flickering during stop/restore transitions (F-14)
+- **Diagnostics error card** — when last backup failed, popover shows localised error title, suggested action, and "Show Log" / "Retry" buttons (F-15)
+- **VoiceOver / Accessibility** — status dot, progress bar, badge, and all action buttons have `accessibilityLabel` / `accessibilityHint` (F-16)
+- **Update banner dismiss** — × button lets user dismiss the update notification; banner shows download/verify/install phase text during update (F-17)
+- **Post-restore result card** — shows restored/overwritten/failed counts for 60 seconds after a restore completes (F-18)
+- **Cached backup state** — `hasBackups` and `canUndo` are cached in `AppUIState`; no disk I/O on each SwiftUI render cycle (F-19)
+- **Phase-coloured progress bar** — scanning=grey, copying=gold, finalising=green, cancelled=red (F-21)
+- **Animated menu-bar icon** — 3-frame pulse: gold=running, orange=stopping, blue=restoring (F-22)
+- **Unified error taxonomy** — `ErrorReporter` provides `localizedTitle(for:)` and `suggestedAction(for:)` for all error categories (F-06)
+
+### UI
+- **Popover restructured** — 4 stable zones: Header / Health / Actions / Context; width 300 → 320 px (F-20)
+- **Primary action button** — context-aware filled button: gold "Start Backup" at rest, red "Stop Backup" while running, inline label during stopping/restoring
+- **Italian labels** — action buttons localised to Italian (Ripristina, Annulla, Espelli, Esci, Pianificazione)
+
 ## [2.1.0] - 2026-03-20
 
 ### Fixed
