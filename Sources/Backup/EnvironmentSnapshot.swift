@@ -20,6 +20,7 @@ enum EnvironmentSnapshot {
         captureBrewfile(to: envDir)
         captureSystemInfo(to: envDir)
         captureAppList(to: envDir)
+        captureVSCodeExtensions(to: envDir)
         copyAppBinary(to: envDir)
         generateRestoreScript(to: envDir)
 
@@ -134,6 +135,38 @@ enum EnvironmentSnapshot {
                           atomically: true, encoding: .utf8)
     }
 
+    private static func captureVSCodeExtensions(to dir: URL) {
+        // VS Code
+        captureCommandOutput(
+            cmd: "/usr/local/bin/code", altCmd: "/opt/homebrew/bin/code",
+            args: ["--list-extensions"],
+            to: dir.appendingPathComponent("vscode-extensions.txt"))
+        // Cursor
+        captureCommandOutput(
+            cmd: "/usr/local/bin/cursor", altCmd: "/opt/homebrew/bin/cursor",
+            args: ["--list-extensions"],
+            to: dir.appendingPathComponent("cursor-extensions.txt"))
+    }
+
+    private static func captureCommandOutput(cmd: String, altCmd: String,
+                                              args: [String], to url: URL) {
+        let path = FileManager.default.fileExists(atPath: cmd) ? cmd :
+                   (FileManager.default.fileExists(atPath: altCmd) ? altCmd : nil)
+        guard let execPath = path else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: execPath)
+        p.arguments = args
+        p.environment = ["HOME": NSHomeDirectory(), "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do {
+            try p.run(); p.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if !data.isEmpty { try data.write(to: url) }
+        } catch {}
+    }
+
     static func findAppBundle() -> URL? {
         let mainPath = Bundle.main.bundlePath
         if mainPath.hasSuffix(".app") {
@@ -222,7 +255,38 @@ enum EnvironmentSnapshot {
             fi
         done
 
-        # 4. Install the backup app itself
+        # 4. Install VS Code extensions
+        if [ -f "$SCRIPT_DIR/vscode-extensions.txt" ] && command -v code &>/dev/null; then
+            echo ""
+            echo "Installing VS Code extensions..."
+            while IFS= read -r ext; do
+                code --install-extension "$ext" --force 2>/dev/null && echo "  [ok] $ext" || echo "  [fail] $ext"
+            done < "$SCRIPT_DIR/vscode-extensions.txt"
+        fi
+
+        # 5. Install Cursor extensions
+        if [ -f "$SCRIPT_DIR/cursor-extensions.txt" ] && command -v cursor &>/dev/null; then
+            echo ""
+            echo "Installing Cursor extensions..."
+            while IFS= read -r ext; do
+                cursor --install-extension "$ext" --force 2>/dev/null && echo "  [ok] $ext" || echo "  [fail] $ext"
+            done < "$SCRIPT_DIR/cursor-extensions.txt"
+        fi
+
+        # 6. Clone Git repos (restore .git/objects excluded from backup)
+        echo ""
+        echo "Checking Git repos..."
+        if [ -d "$HOME_DIR/GitHub" ]; then
+            for repo in "$HOME_DIR/GitHub"/*/; do
+                name="$(basename "$repo")"
+                if [ -d "$repo/.git" ] && [ ! -d "$repo/.git/objects" ]; then
+                    echo "  Re-fetching $name..."
+                    (cd "$repo" && git fetch --all 2>/dev/null && echo "  [ok] $name" || echo "  [fail] $name")
+                fi
+            done
+        fi
+
+        # 7. Install the backup app itself
         if [ -d "$SCRIPT_DIR/RustyMacBackup.app" ]; then
             echo ""
             echo "Installing RustyMacBackup.app..."
@@ -233,8 +297,18 @@ enum EnvironmentSnapshot {
 
         echo ""
         echo "=== Restore complete ==="
-        echo "Review the output above for any [skip] or [fail] items."
-        echo "You may need to restart your shell or log out/in for changes to take effect."
+        echo ""
+        echo "What was restored:"
+        echo "  - Homebrew packages (formulae, casks, Mac App Store apps)"
+        echo "  - Config files (shell, git, ssh, editors, AI tools)"
+        echo "  - VS Code / Cursor extensions"
+        echo "  - Git repos (re-fetched from remote)"
+        echo "  - RustyMacBackup.app"
+        echo ""
+        echo "Manual steps needed:"
+        echo "  - Sign into iCloud, GitHub, Azure, etc."
+        echo "  - Re-download Xcode certificates (Xcode > Settings > Accounts)"
+        echo "  - Restart your shell (source ~/.zshrc or open new terminal)"
         """
         let url = dir.appendingPathComponent("restore.sh")
         try? script.write(to: url, atomically: true, encoding: .utf8)
