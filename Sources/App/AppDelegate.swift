@@ -1,14 +1,17 @@
 import Cocoa
 import UserNotifications
+import SwiftUI
 
-class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     var config: Config?
     var statusManager = StatusManager()
     private var iconManager: IconManager!
     private var pollTimer: Timer?
     private let popover = NSPopover()
+    private var uiState: AppUIState!
     private var popoverVC: PopoverViewController!
+    private var treeWindowController: TreeWindowController?
 
     func setInitialConfig(_ config: Config?) {
         self.config = config
@@ -17,7 +20,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Prevent macOS from auto-terminating this menu bar-only app
         ProcessInfo.processInfo.automaticTerminationSupportEnabled = false
         ProcessInfo.processInfo.disableAutomaticTermination("Menu bar app must stay alive")
         ProcessInfo.processInfo.disableSuddenTermination()
@@ -27,9 +29,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         iconManager = IconManager(statusItem: statusItem)
         iconManager.setState(.idle)
 
-        // Setup popover
-        popoverVC = PopoverViewController()
-        popoverVC.popoverDelegate = self
+        // Create shared UI state and wire callbacks.
+        uiState = AppUIState()
+        wireCallbacks()
+
+        // Setup popover with SwiftUI content.
+        popoverVC = PopoverViewController(uiState: uiState)
         popover.contentViewController = popoverVC
         popover.behavior = .transient
         popover.animates = true
@@ -40,13 +45,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         DispatchQueue.main.async { [weak self] in self?.deferredInit() }
     }
 
+    // MARK: - Callbacks
+
+    private func wireCallbacks() {
+        uiState.onRequestBackup = { [weak self] in self?.handleRequestBackup() }
+        uiState.onRequestRestore = { [weak self] in self?.handleRequestRestore() }
+        uiState.onRequestStop = { [weak self] in self?.handleStop() }
+        uiState.onRequestEject = { [weak self] in self?.handleEject() }
+        uiState.onRequestOpenFolder = { [weak self] in self?.handleOpenFolder() }
+        uiState.onRequestQuit = { NSApplication.shared.terminate(nil) }
+        uiState.onSelectDisk = { [weak self] url in self?.handleSelectDisk(url) }
+        uiState.onRequestUndoRestore = { [weak self] in self?.handleUndoRestore() }
+    }
+
     private func deferredInit() {
         if config == nil {
             config = try? Config.load(from: Config.defaultPath)
         }
         Log.info("Config loaded: \(config != nil ? "\(config!.source.paths.count) paths" : "none")")
 
-        // Only request notifications when running as a proper .app bundle
         if Bundle.main.bundleIdentifier != nil {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
                 Log.info("Notification auth: granted=\(granted) error=\(error?.localizedDescription ?? "none")")
@@ -59,8 +76,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         ws.notificationCenter.addObserver(self, selector: #selector(volumeChanged),
                                           name: NSWorkspace.didUnmountNotification, object: nil)
 
-        // Light poll every 30s -- only checks status.json and destination path existence
-        // No filesystem scanning, no volume enumeration
         pollTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             self?.pollStatus()
         }
@@ -74,55 +89,93 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else if let button = statusItem.button {
-            // Poll fresh state before showing
             pollStatus()
-            popoverVC.refresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
 
-    // MARK: - PopoverDelegate
+    // MARK: - Action handlers
 
-    func popoverDidStartBackup(selectedPaths: [String]) {
+    private func handleRequestBackup() {
+        guard let config = config else { return }
+        popover.performClose(nil)
+
+        let treeWC = TreeWindowController(
+            mode: .backup,
+            enabledPaths: Set(config.source.paths),
+            onConfirmBackup: { [weak self] selectedPaths in
+                self?.treeWindowController = nil
+                self?.startBackup(selectedPaths: selectedPaths)
+            }
+        )
+        treeWC.showWindow(nil)
+        treeWC.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        treeWindowController = treeWC
+    }
+
+    private func handleRequestRestore() {
+        let backups = RestoreEngine.findBackupSnapshots()
+        guard let first = backups.first, let latest = first.snapshots.first else { return }
+        let snapshotURL = first.backupDir.appendingPathComponent(latest)
+        popover.performClose(nil)
+
+        let treeWC = TreeWindowController(
+            mode: .restore(snapshotURL: snapshotURL),
+            onConfirmRestore: { [weak self] url, items, brewInstall in
+                self?.treeWindowController = nil
+                self?.startRestore(snapshotURL: url, items: items, brewInstall: brewInstall)
+            }
+        )
+        treeWC.showWindow(nil)
+        treeWC.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        treeWindowController = treeWC
+    }
+
+    private func startBackup(selectedPaths: [String]) {
         guard var config = config else { return }
-        // Save selected paths to config
         config.source.paths = selectedPaths
         try? config.save(to: Config.defaultPath)
         self.config = config
-        popover.performClose(nil)
         iconManager.setState(.running)
+        uiState.appState = .running
         Log.info("Backup started: \(config.source.paths.count) paths -> \(config.destination.path)")
+
         Task.detached {
             do {
                 try await BackupEngine.run(config: config)
                 await MainActor.run {
                     Log.info("Backup completed successfully")
                     self.sendNotification(title: "Backup completed",
-                                         body: "Backup finished successfully")
+                                          body: "Backup finished successfully")
                     self.pollStatus()
                 }
             } catch {
                 await MainActor.run {
                     Log.error("Backup failed: \(error.localizedDescription)")
                     self.iconManager.setState(.error)
+                    self.uiState.appState = .error
                     self.sendNotification(title: "Backup failed",
-                                         body: error.localizedDescription)
+                                          body: error.localizedDescription)
                 }
             }
         }
     }
 
-    func popoverDidRequestStop() {
+    private func handleStop() {
         BackupEngine.stop()
         iconManager.setState(.idle)
+        pollStatus()
     }
 
-    func popoverDidRequestEject() {
+    private func handleEject() {
         guard let config = config else { return }
         let volumePath = URL(fileURLWithPath: config.destination.path).deletingLastPathComponent()
         let volumeName = volumePath.lastPathComponent
         popover.performClose(nil)
         Log.info("Ejecting: \(volumePath.path)")
+
         DispatchQueue.global(qos: .userInitiated).async {
             let success = Self.runDiskutil(["eject", volumePath.path])
                 || Self.runDiskutil(["unmount", "force", volumePath.path])
@@ -130,51 +183,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
                 if success {
                     Log.info("Disk ejected: \(volumeName)")
                     self.sendNotification(title: "Disk ejected",
-                                         body: "\(volumeName) safely removed")
+                                          body: "\(volumeName) safely removed")
                     self.iconManager.setState(.diskAbsent)
+                    self.pollStatus()
                 } else {
                     Log.error("Eject failed: \(volumeName)")
                     self.sendNotification(title: "Eject failed",
-                                         body: "Another app is using \(volumeName). Close it and retry.")
+                                          body: "Another app is using \(volumeName). Close it and retry.")
                 }
             }
         }
     }
 
-    func popoverDidRequestOpenFolder() {
+    private func handleOpenFolder() {
         guard let config = config else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: config.destination.path))
     }
 
-    func popoverDidRequestAddFolder() {
-        popover.performClose(nil)
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
-        panel.prompt = "Add to Backup"
-        panel.message = "Select files or folders to back up"
-
-        panel.begin { [weak self] response in
-            guard response == .OK, let self = self, var config = self.config else { return }
-            for url in panel.urls {
-                let contracted = ConfigDiscovery.contract(url.path)
-                if ConfigDiscovery.isForbidden(contracted) {
-                    self.sendNotification(title: "Path blocked",
-                                         body: "\(contracted) is system-protected and cannot be backed up safely")
-                    continue
-                }
-                if !config.source.paths.contains(contracted) {
-                    config.source.paths.append(contracted)
-                }
-            }
-            try? config.save(to: Config.defaultPath)
-            self.config = config
-            DispatchQueue.main.async { self.popoverVC.refresh() }
-        }
-    }
-
-    func popoverDidSelectDisk(_ volumeURL: URL) {
+    private func handleSelectDisk(_ volumeURL: URL) {
         let backupDir = volumeURL.appendingPathComponent("RustyMacBackup")
         do {
             try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
@@ -193,30 +219,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         }
 
         sendNotification(title: "Setup complete",
-                        body: "Backing up \(newConfig.source.paths.count) paths to \(volumeURL.lastPathComponent)")
+                         body: "Backing up \(newConfig.source.paths.count) paths to \(volumeURL.lastPathComponent)")
         pollStatus()
-        popoverVC.refresh()
     }
 
-    func popoverDidTogglePath(_ path: String, enabled: Bool) {
-        guard var config = config else { return }
-        if enabled {
-            if !config.source.paths.contains(path) {
-                config.source.paths.append(path)
-            }
-        } else {
-            config.source.paths.removeAll { $0 == path }
-        }
-        try? config.save(to: Config.defaultPath)
-        self.config = config
-    }
-
-    func popoverDidStartRestore(snapshotURL: URL, items: [String], brewInstall: Bool) {
+    private func startRestore(snapshotURL: URL, items: [String], brewInstall: Bool) {
         popover.performClose(nil)
         iconManager.setState(.running)
+        uiState.appState = .running
         Log.info("Restore started: \(items.count) items from \(snapshotURL.lastPathComponent)")
         sendNotification(title: "Restore started",
-                        body: "Restoring \(items.count) items from \(snapshotURL.lastPathComponent)...")
+                         body: "Restoring \(items.count) items from \(snapshotURL.lastPathComponent)…")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items) { item, done, total in
@@ -226,8 +239,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
             var brewOK = true
             if brewInstall {
                 DispatchQueue.main.async {
-                    self?.sendNotification(title: "Installing Homebrew packages...",
-                                          body: "This may take a few minutes")
+                    self?.sendNotification(title: "Installing Homebrew packages…",
+                                           body: "This may take a few minutes")
                 }
                 brewOK = RestoreEngine.restoreHomebrew(snapshotURL: snapshotURL)
             }
@@ -241,22 +254,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
                     title: "Restore complete",
                     body: "\(result.restored) restored, \(result.overwritten) overwritten, \(result.failed) failed\(brewMsg)\(backupMsg)")
 
-                // After restore, create config pointing to this backup disk
                 let backupDir = snapshotURL.deletingLastPathComponent()
                 let newConfig = generateDefaultConfig(backupPath: backupDir.path)
                 try? newConfig.save(to: Config.defaultPath)
                 self?.config = try? Config.load(from: Config.defaultPath)
                 self?.pollStatus()
-                self?.popoverVC.refresh()
             }
         }
     }
 
-    func popoverDidRequestUndoRestore() {
+    private func handleUndoRestore() {
         guard let backupDir = RestoreEngine.latestPreRestoreBackup() else { return }
         popover.performClose(nil)
         iconManager.setState(.running)
-        sendNotification(title: "Undoing restore...", body: "Restoring original files")
+        uiState.appState = .running
+        sendNotification(title: "Undoing restore…", body: "Restoring original files")
         Log.info("Undo restore started from \(backupDir.lastPathComponent)")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -267,30 +279,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
                 self?.sendNotification(
                     title: "Undo restore complete",
                     body: "\(result.restored) files restored to original state, \(result.failed) failed")
-                self?.popoverVC.refresh()
+                self?.pollStatus()
             }
         }
     }
 
-    func popoverDidRequestQuit() {
-        NSApplication.shared.terminate(nil)
-    }
-
-    func popoverGetState() -> AppState { statusManager.currentState }
-    func popoverGetStatus() -> BackupStatusFile? { statusManager.lastStatus }
-    func popoverGetConfig() -> Config? { config }
-
     // MARK: - Volume notifications
 
-    @objc private func volumeChanged() {
-        pollStatus()
-    }
+    @objc private func volumeChanged() { pollStatus() }
 
     // MARK: - Status polling
 
     private func pollStatus() {
         let newState = statusManager.poll(config: config)
         iconManager.setState(newState)
+        // Push updated state to SwiftUI via AppUIState.
+        uiState.appState = newState
+        uiState.status = statusManager.lastStatus
+        uiState.config = config
     }
 
     // MARK: - Helpers

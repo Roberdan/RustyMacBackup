@@ -1,6 +1,7 @@
 import Cocoa
+import SwiftUI
 
-// MARK: - Colors (system-aligned, minimal)
+// MARK: - AppKit Colors (system-aligned)
 enum MLColor {
     static var accent: NSColor { .controlAccentColor }
     static var success: NSColor { .systemGreen }
@@ -8,6 +9,47 @@ enum MLColor {
     static var error: NSColor { .systemRed }
     static var secondary: NSColor { .secondaryLabelColor }
     static var tertiary: NSColor { .tertiaryLabelColor }
+
+    // Maranello Luce brand colors
+    static var gold: NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 1.000, green: 0.780, blue: 0.172, alpha: 1)
+            : NSColor(srgbRed: 0.545, green: 0.420, blue: 0.000, alpha: 1) }
+    }
+    static var rosso: NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.863, green: 0.000, blue: 0.000, alpha: 1)
+            : NSColor(srgbRed: 0.667, green: 0.000, blue: 0.000, alpha: 1) }
+    }
+    static var verde: NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.000, green: 0.651, blue: 0.318, alpha: 1)
+            : NSColor(srgbRed: 0.000, green: 0.478, blue: 0.239, alpha: 1) }
+    }
+}
+
+// MARK: - SwiftUI Colors (Maranello Luce)
+extension Color {
+    static var mlGold: Color {
+        Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 1.000, green: 0.780, blue: 0.172, alpha: 1)
+            : NSColor(srgbRed: 0.545, green: 0.420, blue: 0.000, alpha: 1) })
+    }
+    static var mlRosso: Color {
+        Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.863, green: 0.000, blue: 0.000, alpha: 1)
+            : NSColor(srgbRed: 0.667, green: 0.000, blue: 0.000, alpha: 1) })
+    }
+    static var mlVerde: Color {
+        Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.000, green: 0.651, blue: 0.318, alpha: 1)
+            : NSColor(srgbRed: 0.000, green: 0.478, blue: 0.239, alpha: 1) })
+    }
+    static var mlInfo: Color {
+        Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.267, green: 0.541, blue: 1.000, alpha: 1)
+            : NSColor(srgbRed: 0.000, green: 0.353, blue: 0.800, alpha: 1) })
+    }
 }
 
 // MARK: - Formatting Helpers

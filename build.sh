@@ -33,6 +33,7 @@ swiftc \
     -O \
     -target "$MACOS_TARGET" \
     -framework Cocoa \
+    -framework SwiftUI \
     -framework UserNotifications \
     -framework IOKit \
     -o "$BINARY" \
