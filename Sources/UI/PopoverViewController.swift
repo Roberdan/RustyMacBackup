@@ -18,7 +18,6 @@ protocol PopoverDelegate: AnyObject {
 
 class PopoverViewController: NSViewController, ToolToggleDelegate {
     weak var popoverDelegate: PopoverDelegate?
-    private var updateTimer: Timer?
 
     private let outerStack = NSStackView()
     private let headerLabel = NSTextField(labelWithString: "RustyMacBackup")
@@ -36,7 +35,8 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
     private var toolsScroll = NSScrollView()
     private var toolsStack = NSStackView()
     private var categoryViews: [ToolsCategoryView] = []
-    private var undoRestoreButton: NSButton!
+    private var undoRestoreButton: NSButton?
+    private var isSetupComplete = false
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
@@ -51,15 +51,6 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
     override func viewWillAppear() {
         super.viewWillAppear()
         refresh()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.refresh()
-        }
-    }
-
-    override func viewWillDisappear() {
-        super.viewWillDisappear()
-        updateTimer?.invalidate()
-        updateTimer = nil
     }
 
     private func setupUI() {
@@ -176,25 +167,28 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         // -- Actions --
         addAction("Open Backup Folder", icon: "folder", action: #selector(openFolderTapped))
         addAction("Eject Disk", icon: "eject", action: #selector(ejectTapped))
-        undoRestoreButton = NSButton(title: "Undo Last Restore", target: self, action: #selector(undoRestoreTapped))
-        undoRestoreButton.bezelStyle = .inline
-        undoRestoreButton.isBordered = false
-        undoRestoreButton.font = .systemFont(ofSize: 13)
-        undoRestoreButton.alignment = .left
-        undoRestoreButton.contentTintColor = MLColor.warning
+        let undoBtn = NSButton(title: "Undo Last Restore", target: self, action: #selector(undoRestoreTapped))
+        undoBtn.bezelStyle = .inline
+        undoBtn.isBordered = false
+        undoBtn.font = .systemFont(ofSize: 13)
+        undoBtn.alignment = .left
+        undoBtn.contentTintColor = MLColor.warning
         if let img = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Undo Restore") {
-            undoRestoreButton.image = img
-            undoRestoreButton.imagePosition = .imageLeading
+            undoBtn.image = img
+            undoBtn.imagePosition = .imageLeading
         }
-        addToOuter(undoRestoreButton)
+        undoRestoreButton = undoBtn
+        addToOuter(undoBtn)
         addSep()
         addAction("Quit", icon: "power", action: #selector(quitTapped), key: "q")
+
+        isSetupComplete = true
     }
 
     // MARK: - Refresh
 
     func refresh() {
-        guard let delegate = popoverDelegate else { return }
+        guard isSetupComplete, let delegate = popoverDelegate else { return }
         let state = delegate.popoverGetState()
         let status = delegate.popoverGetStatus()
         let config = delegate.popoverGetConfig()
@@ -250,9 +244,12 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         diskStack.isHidden = !showDisks
         if showDisks { rebuildDiskList() }
 
-        // Restore section -- always visible when backups exist on any disk
-        let backups = RestoreEngine.findBackupSnapshots()
-        let showRestore = !backups.isEmpty
+        // Restore section -- check for backups but don't crash if volumes are in flux
+        var backups: [(volume: String, backupDir: URL, snapshots: [String])] = []
+        if let config = config, FileManager.default.fileExists(atPath: config.destination.path) {
+            backups = RestoreEngine.findBackupSnapshots()
+        }
+        let showRestore = !backups.isEmpty && state != .needsSetup
         restoreHeader.isHidden = !showRestore
         restoreStack.isHidden = !showRestore
         if showRestore { rebuildRestoreList(backups: backups) }
@@ -268,7 +265,7 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         }
 
         // Undo restore -- visible only if pre-restore backups exist
-        undoRestoreButton.isHidden = !RestoreEngine.hasPreRestoreBackup()
+        undoRestoreButton?.isHidden = !RestoreEngine.hasPreRestoreBackup()
 
         // Tools -- only rebuild if not running (avoid flicker)
         if !running { rebuildToolsList(config: config) }

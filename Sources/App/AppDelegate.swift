@@ -59,10 +59,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         ws.notificationCenter.addObserver(self, selector: #selector(volumeChanged),
                                           name: NSWorkspace.didUnmountNotification, object: nil)
 
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+        // Light poll every 30s -- only checks status.json and destination path existence
+        // No filesystem scanning, no volume enumeration
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             self?.pollStatus()
         }
-        pollTimer?.tolerance = 2.0
+        pollTimer?.tolerance = 5.0
         pollStatus()
     }
 
@@ -72,6 +74,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else if let button = statusItem.button {
+            // Poll fresh state before showing
+            pollStatus()
             popoverVC.refresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
