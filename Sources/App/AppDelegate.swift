@@ -120,17 +120,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
     func popoverDidRequestEject() {
         guard let config = config else { return }
         let volumePath = URL(fileURLWithPath: config.destination.path).deletingLastPathComponent()
+        let volumeName = volumePath.lastPathComponent
         popover.performClose(nil)
+        Log.info("Ejecting: \(volumePath.path)")
         DispatchQueue.global(qos: .userInitiated).async {
-            let success = NSWorkspace.shared.unmountAndEjectDevice(atPath: volumePath.path)
-            DispatchQueue.main.async {
-                if success {
-                    self.sendNotification(title: "Disk ejected",
-                                         body: "\(volumePath.lastPathComponent) safely removed")
-                    self.iconManager.setState(.diskAbsent)
-                } else {
-                    self.sendNotification(title: "Eject failed",
-                                         body: "Could not eject \(volumePath.lastPathComponent)")
+            // Use diskutil eject which is more reliable than NSWorkspace
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
+            process.arguments = ["eject", volumePath.path]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let success = process.terminationStatus == 0
+                DispatchQueue.main.async {
+                    if success {
+                        Log.info("Disk ejected: \(volumeName)")
+                        self.sendNotification(title: "Disk ejected",
+                                             body: "\(volumeName) safely removed")
+                        self.iconManager.setState(.diskAbsent)
+                    } else {
+                        Log.error("Eject failed: \(volumeName)")
+                        self.sendNotification(title: "Eject failed",
+                                             body: "Could not eject \(volumeName)")
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    Log.error("Eject error: \(error)")
+                    self.sendNotification(title: "Eject failed", body: error.localizedDescription)
                 }
             }
         }

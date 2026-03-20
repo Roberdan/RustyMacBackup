@@ -124,13 +124,24 @@ enum EnvironmentSnapshot {
     }
 
     private static func copyAppBinary(to dir: URL) {
-        // Copy the RustyMacBackup.app bundle into the backup for disaster recovery
-        guard let bundlePath = Bundle.main.bundlePath as String?,
-              bundlePath.hasSuffix(".app") else { return }
-        let bundleURL = URL(fileURLWithPath: bundlePath)
+        // Find the .app bundle -- try Bundle.main first, then walk up from executable
+        var bundleURL: URL?
+        let mainPath = Bundle.main.bundlePath
+        if mainPath.hasSuffix(".app") {
+            bundleURL = URL(fileURLWithPath: mainPath)
+        } else if let execPath = Bundle.main.executablePath {
+            // Walk up: .../RustyMacBackup.app/Contents/MacOS/RustyMacBackup -> .app
+            var url = URL(fileURLWithPath: execPath)
+            for _ in 0..<4 {
+                url = url.deletingLastPathComponent()
+                if url.path.hasSuffix(".app") { bundleURL = url; break }
+            }
+        }
+        guard let appURL = bundleURL,
+              FileManager.default.fileExists(atPath: appURL.path) else { return }
         let destApp = dir.appendingPathComponent("RustyMacBackup.app")
         try? FileManager.default.removeItem(at: destApp)
-        try? FileManager.default.copyItem(at: bundleURL, to: destApp)
+        try? FileManager.default.copyItem(at: appURL, to: destApp)
     }
 
     private static func generateRestoreScript(to dir: URL) {
