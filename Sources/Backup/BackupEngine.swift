@@ -37,9 +37,10 @@ enum BackupEngine {
         if isiCloudDesktopActive() {
             Log.warn("iCloud Desktop & Documents sync is ACTIVE -- using bird-safe mode")
         }
-        // Always throttle I/O to avoid triggering bird/iCloud eviction cascades
-        IOPriority.setIOPriority(throttle: true)
-        Log.info("I/O priority: throttled (bird-safe mode)")
+        // Throttle I/O on battery; use default priority on AC power
+        let onBattery = IOPriority.isOnBattery()
+        IOPriority.setIOPriority(throttle: onBattery)
+        Log.info("I/O priority: \(onBattery ? "throttled (battery)" : "full speed (AC)")")
         guard preflightWriteTest(at: destURL) else { throw BackupError.notWritable(destPath) }
         cleanStaleInProgress(at: destURL)
 

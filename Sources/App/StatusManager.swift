@@ -30,10 +30,19 @@ class StatusManager {
         if let status = lastStatus {
             if status.state == "running" {
                 let lockPath = config.destination.path + "/rustymacbackup.lock"
-                if FileManager.default.fileExists(atPath: lockPath) {
+                let lockAlive: Bool = {
+                    guard let pidStr = try? String(contentsOfFile: lockPath, encoding: .utf8),
+                          let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                        return false
+                    }
+                    return kill(pid, 0) == 0  // 0 = alive, -1 = dead/zombie
+                }()
+                if lockAlive {
                     currentState = .running
                     return currentState
                 }
+                // Stale lock (process crashed) — remove and mark idle
+                try? FileManager.default.removeItem(atPath: lockPath)
                 var fixed = status
                 fixed.state = "idle"
                 try? statusWriter.write(status: fixed)

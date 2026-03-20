@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var uiState: AppUIState!
     private var popoverVC: PopoverViewController!
     private var treeWindowController: TreeWindowController?
+    private var snapshotPickerWC: SnapshotPickerWindowController?
 
     func setInitialConfig(_ config: Config?) {
         self.config = config
@@ -126,10 +127,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleRequestRestore() {
         let backups = RestoreEngine.findBackupSnapshots()
-        guard let first = backups.first, let latest = first.snapshots.first else { return }
-        let snapshotURL = first.backupDir.appendingPathComponent(latest)
+        guard let first = backups.first, !first.snapshots.isEmpty else { return }
         popover.performClose(nil)
 
+        let entries = first.snapshots.map {
+            SnapshotEntry(url: first.backupDir.appendingPathComponent($0))
+        }
+
+        if entries.count == 1 {
+            openRestoreTree(snapshotURL: entries[0].url)
+            return
+        }
+
+        // Multiple snapshots — show picker first
+        let picker = SnapshotPickerWindowController(
+            entries: entries,
+            onPick: { [weak self] url in
+                self?.snapshotPickerWC = nil
+                self?.openRestoreTree(snapshotURL: url)
+            },
+            onCancel: { [weak self] in self?.snapshotPickerWC = nil }
+        )
+        picker.showWindow(nil)
+        picker.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        snapshotPickerWC = picker
+    }
+
+    private func openRestoreTree(snapshotURL: URL) {
         let treeWC = TreeWindowController(
             mode: .restore(snapshotURL: snapshotURL),
             onConfirmRestore: { [weak self] url, items, brewInstall in
