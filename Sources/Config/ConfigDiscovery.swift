@@ -87,8 +87,9 @@ enum ConfigDiscovery {
         ("Dev Tools", "Cargo config", ["~/.cargo/config.toml"], false),
         ("Dev Tools", "Homebrew Bundle", ["~/.Brewfile", "~/Brewfile"], false),
 
-        // LLM tools (config only, not tokens)
-        ("AI Tools", "Claude CLI", ["~/.claude/settings.json"], false),
+        // AI/LLM tools (full config dirs -- agents, settings, projects, instructions)
+        ("AI Tools", "Claude CLI", ["~/.claude"], false),
+        ("AI Tools", "GitHub Copilot", ["~/.config/github-copilot"], false),
         ("AI Tools", "Ollama config", ["~/.ollama/Modelfile"], false),
 
         // Cloud CLIs (config only, NOT credentials)

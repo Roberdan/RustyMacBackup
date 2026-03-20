@@ -249,6 +249,10 @@ func generateDefaultConfig(backupPath: String) -> Config {
         "CachedData", "CachedExtensions", "CachedExtensionVSIXs",
         // Large binaries
         "*.iso", "*.dmg",
+        // AI tool caches and databases (regenerable)
+        "embedding-cache.db", "embedding-cache.db-shm", "embedding-cache.db-wal",
+        "session-store.db", "session-store.db-shm", "session-store.db-wal",
+        "session.db", "logs", "marketplace-cache",
         // AI models (huge, re-downloadable)
         ".ollama/models", ".lmstudio",
     ]

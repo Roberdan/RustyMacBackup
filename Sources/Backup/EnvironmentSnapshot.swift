@@ -1,0 +1,176 @@
+import Foundation
+
+/// Captures a portable snapshot of the dev environment before each backup.
+/// Generates Brewfile, app list, macOS info, and a restore script.
+enum EnvironmentSnapshot {
+    static func capture(to destURL: URL) {
+        let envDir = destURL.appendingPathComponent("_environment")
+        try? FileManager.default.createDirectory(at: envDir, withIntermediateDirectories: true)
+
+        captureBrewfile(to: envDir)
+        captureSystemInfo(to: envDir)
+        captureAppList(to: envDir)
+        copyAppBinary(to: envDir)
+        generateRestoreScript(to: envDir)
+    }
+
+    private static func captureBrewfile(to dir: URL) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["brew", "bundle", "dump", "--file=-", "--force"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if !data.isEmpty {
+                try data.write(to: dir.appendingPathComponent("Brewfile"))
+            }
+        } catch {}
+    }
+
+    private static func captureSystemInfo(to dir: URL) {
+        var info: [String] = []
+        info.append("# Environment Snapshot")
+        info.append("# Generated: \(ISO8601DateFormatter().string(from: Date()))")
+        info.append("")
+
+        // macOS version
+        let pv = ProcessInfo.processInfo
+        info.append("macOS: \(pv.operatingSystemVersionString)")
+        info.append("Host: \(pv.hostName)")
+        info.append("Arch: \(machineArch())")
+        info.append("")
+
+        // Shell
+        info.append("SHELL: \(ProcessInfo.processInfo.environment["SHELL"] ?? "unknown")")
+        info.append("")
+
+        // Homebrew prefix
+        let brewPrefix = FileManager.default.fileExists(atPath: "/opt/homebrew/bin/brew")
+            ? "/opt/homebrew" : "/usr/local"
+        info.append("Homebrew: \(brewPrefix)")
+
+        let output = info.joined(separator: "\n")
+        try? output.write(to: dir.appendingPathComponent("system-info.txt"),
+                          atomically: true, encoding: .utf8)
+    }
+
+    private static func captureAppList(to dir: URL) {
+        let fm = FileManager.default
+        var apps: [String] = []
+        if let contents = try? fm.contentsOfDirectory(atPath: "/Applications") {
+            for name in contents.sorted() where name.hasSuffix(".app") {
+                apps.append(name.replacingOccurrences(of: ".app", with: ""))
+            }
+        }
+        let output = apps.joined(separator: "\n")
+        try? output.write(to: dir.appendingPathComponent("installed-apps.txt"),
+                          atomically: true, encoding: .utf8)
+    }
+
+    private static func copyAppBinary(to dir: URL) {
+        // Copy the RustyMacBackup.app bundle into the backup for disaster recovery
+        guard let bundlePath = Bundle.main.bundlePath as String?,
+              bundlePath.hasSuffix(".app") else { return }
+        let bundleURL = URL(fileURLWithPath: bundlePath)
+        let destApp = dir.appendingPathComponent("RustyMacBackup.app")
+        try? FileManager.default.removeItem(at: destApp)
+        try? FileManager.default.copyItem(at: bundleURL, to: destApp)
+    }
+
+    private static func generateRestoreScript(to dir: URL) {
+        let script = """
+        #!/bin/bash
+        set -euo pipefail
+
+        # RustyMacBackup Environment Restore Script
+        # Run this on a fresh Mac to restore your dev environment.
+        #
+        # Usage: bash restore.sh [backup-snapshot-path]
+
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        SNAPSHOT="${1:-$(dirname "$SCRIPT_DIR")}"
+
+        echo "=== RustyMacBackup Environment Restore ==="
+        echo "Snapshot: $SNAPSHOT"
+        echo "Environment: $SCRIPT_DIR"
+        echo ""
+
+        # 1. Install Homebrew if missing
+        if ! command -v brew &>/dev/null; then
+            echo "Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+        fi
+        echo "[ok] Homebrew ready"
+
+        # 2. Restore Brewfile (taps, formulae, casks, mas apps)
+        if [ -f "$SCRIPT_DIR/Brewfile" ]; then
+            echo "Installing packages from Brewfile..."
+            brew bundle install --file="$SCRIPT_DIR/Brewfile" --no-lock || true
+            echo "[ok] Homebrew packages restored"
+        fi
+
+        # 3. Restore config files
+        echo ""
+        echo "Restoring config files..."
+        HOME_DIR="$HOME"
+
+        for item in "$SNAPSHOT"/.*; do
+            name="$(basename "$item")"
+            case "$name" in
+                .|..|.DS_Store|.Trash|.Spotlight-*) continue ;;
+            esac
+            dest="$HOME_DIR/$name"
+            if [ -e "$dest" ]; then
+                echo "  [skip] ~/$name (already exists)"
+            else
+                cp -R "$item" "$dest" 2>/dev/null && echo "  [ok] ~/$name" || echo "  [fail] ~/$name"
+            fi
+        done
+
+        # Restore non-hidden dirs (GitHub, Developer, etc.)
+        for item in "$SNAPSHOT"/*; do
+            name="$(basename "$item")"
+            case "$name" in
+                _environment) continue ;;
+            esac
+            dest="$HOME_DIR/$name"
+            if [ -e "$dest" ]; then
+                echo "  [skip] ~/$name (already exists)"
+            else
+                cp -R "$item" "$dest" 2>/dev/null && echo "  [ok] ~/$name" || echo "  [fail] ~/$name"
+            fi
+        done
+
+        # 4. Install the backup app itself
+        if [ -d "$SCRIPT_DIR/RustyMacBackup.app" ]; then
+            echo ""
+            echo "Installing RustyMacBackup.app..."
+            cp -R "$SCRIPT_DIR/RustyMacBackup.app" /Applications/ 2>/dev/null \\
+                && echo "[ok] RustyMacBackup.app installed" \\
+                || echo "[fail] Could not install (try: sudo cp -R)"
+        fi
+
+        echo ""
+        echo "=== Restore complete ==="
+        echo "Review the output above for any [skip] or [fail] items."
+        echo "You may need to restart your shell or log out/in for changes to take effect."
+        """
+        let url = dir.appendingPathComponent("restore.sh")
+        try? script.write(to: url, atomically: true, encoding: .utf8)
+        // Make executable
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    private static func machineArch() -> String {
+        var sysinfo = utsname()
+        uname(&sysinfo)
+        return withUnsafePointer(to: &sysinfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+    }
+}

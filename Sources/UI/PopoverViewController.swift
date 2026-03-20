@@ -6,6 +6,7 @@ protocol PopoverDelegate: AnyObject {
     func popoverDidRequestEject()
     func popoverDidRequestOpenFolder()
     func popoverDidRequestAddFolder()
+    func popoverDidSelectDisk(_ volumeURL: URL)
     func popoverDidTogglePath(_ path: String, enabled: Bool)
     func popoverDidRequestQuit()
     func popoverGetState() -> AppState
@@ -26,6 +27,8 @@ class PopoverViewController: NSViewController {
     private let statsLabel = NSTextField(labelWithString: "")
     private var folderStack = NSStackView()
     private let folderHeader = NSTextField(labelWithString: "")
+    private var diskStack = NSStackView()
+    private let diskHeader = NSTextField(labelWithString: "")
 
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 400))
@@ -115,6 +118,17 @@ class PopoverViewController: NSViewController {
         addRow(progressLabel)
         addSeparator()
 
+        // Disk selection (visible only during setup)
+        diskHeader.font = .systemFont(ofSize: 12, weight: .semibold)
+        diskHeader.textColor = .labelColor
+        diskHeader.stringValue = "Select Backup Disk"
+        addRow(diskHeader)
+        diskStack.orientation = .vertical
+        diskStack.alignment = .leading
+        diskStack.spacing = 4
+        addRow(diskStack)
+        addSeparator()
+
         // Folders section
         let folderTitleRow = makeRow()
         folderHeader.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -197,6 +211,14 @@ class PopoverViewController: NSViewController {
             }
         }
 
+        // Disk selection (setup mode)
+        let showDisks = state == .needsSetup
+        diskHeader.isHidden = !showDisks
+        diskStack.isHidden = !showDisks
+        if showDisks {
+            rebuildDiskList()
+        }
+
         // Progress
         let isRunning = state == .running
         progressBar.isHidden = !isRunning
@@ -239,6 +261,51 @@ class PopoverViewController: NSViewController {
             more.textColor = MLColor.tertiary
             folderStack.addArrangedSubview(more)
         }
+    }
+
+    private func rebuildDiskList() {
+        for v in diskStack.arrangedSubviews { diskStack.removeArrangedSubview(v); v.removeFromSuperview() }
+
+        let volumes = discoverVolumes()
+        if volumes.isEmpty {
+            let label = NSTextField(labelWithString: "No external disk connected")
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = MLColor.error
+            diskStack.addArrangedSubview(label)
+            return
+        }
+
+        for volume in volumes {
+            let (free, total) = DiskDiagnostics.diskSpace(at: volume.path)
+            let freeGB = free / 1_073_741_824
+            let totalGB = total / 1_073_741_824
+            let title = "\(volume.lastPathComponent)  --  \(freeGB) / \(totalGB) GB"
+            let btn = NSButton(title: title, target: self, action: #selector(diskSelected(_:)))
+            btn.bezelStyle = .rounded
+            btn.font = .systemFont(ofSize: 12)
+            btn.tag = volumes.firstIndex(of: volume) ?? 0
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.widthAnchor.constraint(equalToConstant: 270).isActive = true
+            diskStack.addArrangedSubview(btn)
+        }
+    }
+
+    private func discoverVolumes() -> [URL] {
+        let fm = FileManager.default
+        guard let volumes = fm.mountedVolumeURLs(
+            includingResourceValuesForKeys: [.volumeNameKey],
+            options: [.skipHiddenVolumes]) else { return [] }
+        return volumes.filter { u in
+            let p = u.path
+            return p != "/" && p != "/System/Volumes/Data"
+                && u.lastPathComponent != "Macintosh HD" && p.hasPrefix("/Volumes/")
+        }
+    }
+
+    @objc private func diskSelected(_ sender: NSButton) {
+        let volumes = discoverVolumes()
+        guard sender.tag < volumes.count else { return }
+        popoverDelegate?.popoverDidSelectDisk(volumes[sender.tag])
     }
 
     // MARK: - Actions

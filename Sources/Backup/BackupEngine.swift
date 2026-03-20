@@ -140,6 +140,9 @@ enum BackupEngine {
         let finalURL = destURL.appendingPathComponent(timestamp)
         try FileManager.default.moveItem(at: inProgressURL, to: finalURL)
 
+        // Capture portable environment snapshot (Brewfile, app list, restore script, app binary)
+        EnvironmentSnapshot.capture(to: finalURL)
+
         if !errorList.isEmpty {
             try? statusWriter.writeErrors(errors: categorizeErrors(errorList))
         }

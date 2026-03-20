@@ -144,6 +144,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         }
     }
 
+    func popoverDidSelectDisk(_ volumeURL: URL) {
+        let backupDir = volumeURL.appendingPathComponent("RustyMacBackup")
+        do {
+            try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        } catch {
+            sendNotification(title: "Error", body: "Cannot create backup folder: \(error.localizedDescription)")
+            return
+        }
+
+        let newConfig = generateDefaultConfig(backupPath: backupDir.path)
+        do {
+            try newConfig.save(to: Config.defaultPath)
+            config = try Config.load(from: Config.defaultPath)
+        } catch {
+            sendNotification(title: "Error", body: "Cannot save config: \(error.localizedDescription)")
+            return
+        }
+
+        sendNotification(title: "Setup complete",
+                        body: "Backing up \(newConfig.source.paths.count) paths to \(volumeURL.lastPathComponent)")
+        pollStatus()
+        popoverVC.refresh()
+    }
+
     func popoverDidTogglePath(_ path: String, enabled: Bool) {
         guard var config = config else { return }
         if enabled {
