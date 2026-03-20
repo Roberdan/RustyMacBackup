@@ -1,5 +1,10 @@
 import Foundation
 
+// F-05: Manifest tracks exact paths overwritten during restore — enables safe undo.
+private struct RestoreManifest: Codable {
+    let overwritten: [String]  // relative paths from home
+}
+
 struct RestoreItem {
     let relativePath: String
     let absoluteSource: String
@@ -81,6 +86,30 @@ enum RestoreEngine {
         return results
     }
 
+    /// Estimate total bytes needed to restore the given items (sum of file sizes, recursive).
+    /// Used for preflight free-space check before starting restore.
+    static func estimateRestoreSize(snapshotURL: URL, items: [String]) -> UInt64 {
+        let fm = FileManager.default
+        var total: UInt64 = 0
+        for rel in items {
+            let url = snapshotURL.appendingPathComponent(rel)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                guard let enumerator = fm.enumerator(
+                    at: url, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
+                for case let fileURL as URL in enumerator {
+                    let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                    total += UInt64(size)
+                }
+            } else {
+                let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? UInt64 ?? 0
+                total += size
+            }
+        }
+        return total
+    }
+
     /// Restore items from a snapshot.
     /// - Backs up existing files to ~/.rustybackup-pre-restore/TIMESTAMP/ before overwriting
     /// - Creates parent directories as needed
@@ -94,10 +123,10 @@ enum RestoreEngine {
         result.backedUpTo = backupDir.path
         let total = items.count
         var didBackup = false
+        var overwrittenRels: [String] = []  // F-05: track for manifest
 
         for (i, rel) in items.enumerated() {
             let source = snapshotURL.appendingPathComponent(rel)
-            // Use custom destination if specified, otherwise default home-relative
             let dest: URL
             if let customDest = destinationOverrides[rel] {
                 let expanded = NSString(string: customDest).expandingTildeInPath
@@ -109,7 +138,6 @@ enum RestoreEngine {
             progress?(rel, i + 1, total)
 
             do {
-                // If destination exists, back it up first
                 if fm.fileExists(atPath: dest.path) {
                     if !didBackup {
                         try fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
@@ -120,6 +148,7 @@ enum RestoreEngine {
                                            withIntermediateDirectories: true)
                     try fm.copyItem(at: dest, to: backupDest)
                     try fm.removeItem(at: dest)
+                    overwrittenRels.append(rel)  // F-05: record overwritten path
                     result.overwritten += 1
                 }
 
@@ -132,11 +161,16 @@ enum RestoreEngine {
             }
         }
 
-        // Clean up empty backup dir if nothing was backed up
-        if !didBackup {
-            result.backedUpTo = ""
+        // F-05: Write manifest so undoRestore() can restore only exact paths, not top-level dirs
+        if didBackup && !overwrittenRels.isEmpty {
+            let manifest = RestoreManifest(overwritten: overwrittenRels)
+            let manifestURL = backupDir.appendingPathComponent("manifest.json")
+            if let data = try? JSONEncoder().encode(manifest) {
+                try? data.write(to: manifestURL, options: .atomic)
+            }
         }
 
+        if !didBackup { result.backedUpTo = "" }
         return result
     }
 
@@ -180,12 +214,40 @@ enum RestoreEngine {
     }
 
     /// Undo the last restore by copying pre-restore files back to home.
+    /// F-05: Uses manifest.json (if present) to restore only exact overwritten paths —
+    /// not entire top-level directories, which would destroy files created after restore.
     static func undoRestore(from backupDir: URL) -> RestoreResult {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
-        let items = scanPreRestoreBackup(at: backupDir)
         var result = RestoreResult()
 
+        // Manifest-based restore: only touch the exact paths that were overwritten
+        let manifestURL = backupDir.appendingPathComponent("manifest.json")
+        if let data = try? Data(contentsOf: manifestURL),
+           let manifest = try? JSONDecoder().decode(RestoreManifest.self, from: data) {
+            for rel in manifest.overwritten {
+                let source = backupDir.appendingPathComponent(rel)
+                let dest = home.appendingPathComponent(rel)
+                do {
+                    if fm.fileExists(atPath: dest.path) {
+                        try fm.removeItem(at: dest)
+                        result.overwritten += 1
+                    }
+                    try fm.createDirectory(at: dest.deletingLastPathComponent(),
+                                           withIntermediateDirectories: true)
+                    try fm.copyItem(at: source, to: dest)
+                    result.restored += 1
+                } catch {
+                    result.failed += 1
+                }
+            }
+            if result.failed == 0 { try? fm.removeItem(at: backupDir) }
+            return result
+        }
+
+        // Fallback: no manifest (legacy backup dir) — restore top-level items with a warning
+        Log.warn("No manifest.json in pre-restore backup — using legacy top-level restore (may overwrite newer files)")
+        let items = scanPreRestoreBackup(at: backupDir)
         for rel in items {
             let source = backupDir.appendingPathComponent(rel)
             let dest = home.appendingPathComponent(rel)
@@ -200,12 +262,7 @@ enum RestoreEngine {
                 result.failed += 1
             }
         }
-
-        // Remove the pre-restore backup after successful undo
-        if result.failed == 0 {
-            try? fm.removeItem(at: backupDir)
-        }
-
+        if result.failed == 0 { try? fm.removeItem(at: backupDir) }
         return result
     }
 

@@ -2,7 +2,9 @@ import Foundation
 import Darwin
 
 enum CLIHandler {
-    static let version = "2.0.0"
+    static var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    }
 
     static func run(args: [String], config: Config? = nil) {
         _ = config

@@ -54,24 +54,29 @@ enum ScheduleManager {
         let fm = FileManager.default
         try fm.createDirectory(at: plistPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.createDirectory(at: logPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // F-11: Use bootout before re-installing to avoid stale service state
         if fm.fileExists(atPath: plistPath.path) {
-            _ = runLaunchctl(arguments: ["unload", plistPath.path])
+            _ = runLaunchctl(arguments: ["bootout", "gui/\(getuid())", plistPath.path])
         }
         try plistContent.write(to: plistPath, atomically: true, encoding: .utf8)
-        let result = runLaunchctl(arguments: ["load", plistPath.path])
+        // F-11: bootstrap/bootout replaces legacy load/unload on modern macOS
+        let result = runLaunchctl(arguments: ["bootstrap", "gui/\(getuid())", plistPath.path])
         guard result.status == 0 else {
-            throw scheduleError("Failed to load schedule: \(result.stderr)")
+            throw scheduleError("Failed to bootstrap schedule: \(result.stderr)")
         }
     }
 
     static func removeSchedule() throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: plistPath.path) {
-            let result = runLaunchctl(arguments: ["unload", plistPath.path])
+            // F-11: bootout instead of legacy unload
+            let result = runLaunchctl(arguments: ["bootout", "gui/\(getuid())", plistPath.path])
             if result.status != 0 {
                 let stderr = result.stderr.lowercased()
-                if !stderr.contains("could not find specified service") && !stderr.contains("no such process") {
-                    throw scheduleError("Failed to unload schedule: \(result.stderr)")
+                if !stderr.contains("could not find specified service")
+                    && !stderr.contains("no such process")
+                    && !stderr.contains("3: no such process") {
+                    throw scheduleError("Failed to bootout schedule: \(result.stderr)")
                 }
             }
             try fm.removeItem(at: plistPath)

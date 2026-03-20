@@ -1,5 +1,11 @@
 import Foundation
 
+enum UpdatePhase {
+    case downloading
+    case verifying
+    case installing
+}
+
 /// Shared observable state consumed by all SwiftUI views.
 /// All mutations must occur on the main thread (guaranteed by AppDelegate's dispatch patterns).
 final class AppUIState: ObservableObject {
@@ -12,6 +18,8 @@ final class AppUIState: ObservableObject {
     @Published var updateAvailable: String?
     /// True while downloading + installing an update.
     @Published var isUpdating: Bool = false
+    /// Current update installation phase — nil when not updating.
+    @Published var updatePhase: UpdatePhase?
 
     // MARK: - Action callbacks — set by AppDelegate before popover is shown
 

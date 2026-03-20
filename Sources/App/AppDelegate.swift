@@ -323,6 +323,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRestore(snapshotURL: URL, items: [String], brewInstall: Bool, overrides: [String: String] = [:]) {
+        // F-10: Preflight free-space check (payload × 2 to account for pre-restore backup copy)
+        let estimate = RestoreEngine.estimateRestoreSize(snapshotURL: snapshotURL, items: items)
+        let required = estimate * 2
+        let available = BackupEngine.diskFreeSpace(at: NSHomeDirectory())
+        if required > available && required > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Spazio insufficiente per il restore"
+            alert.informativeText = "Servono circa \(Fmt.formatBytes(required)) liberi, disponibili \(Fmt.formatBytes(available))."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Annulla")
+            alert.runModal()
+            return
+        }
+
         iconManager.setState(.running)
         uiState.appState = .running
         Log.info("Restore started: \(items.count) items from \(snapshotURL.lastPathComponent)")
@@ -408,15 +422,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleRequestUpdate() {
         guard let version = uiState.updateAvailable else { return }
         uiState.isUpdating = true
+        uiState.updatePhase = .downloading
         Task {
             do {
-                try await AutoUpdater.downloadAndInstall(version: version)
-                // If we reach here, install failed to relaunch — reset state.
-                DispatchQueue.main.async { self.uiState.isUpdating = false }
+                try await AutoUpdater.downloadAndInstall(version: version) { [weak self] phase in
+                    DispatchQueue.main.async { self?.uiState.updatePhase = phase }
+                }
+                DispatchQueue.main.async {
+                    self.uiState.isUpdating = false
+                    self.uiState.updatePhase = nil
+                }
             } catch {
                 Log.error("Update failed: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.uiState.isUpdating = false
+                    self.uiState.updatePhase = nil
                     self.sendNotification(title: "Aggiornamento fallito", body: error.localizedDescription)
                 }
             }

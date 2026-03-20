@@ -10,7 +10,7 @@ enum HardLinker {
               let prevMtime = attrs[.modificationDate] as? Date else {
             return false
         }
-        return sourceSize == prevSize && abs(sourceMtime.timeIntervalSince(prevMtime)) < 1.0
+        return sourceSize == prevSize && abs(sourceMtime.timeIntervalSince(prevMtime)) < 0.001
     }
 
     /// Create hard link from an existing backup file to the new destination.

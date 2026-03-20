@@ -23,13 +23,12 @@ class StatusManager {
         lastStatus = statusWriter.read()
 
         if !FileManager.default.fileExists(atPath: config.destination.path) {
-            // Disk might be mounted but folder deleted — try to recreate it
+            // F-03: Only recreate backup dir if the volume is actually mounted — not just if
+            // the parent path exists (a stale /Volumes/ mountpoint passes that check).
             let destURL = URL(fileURLWithPath: config.destination.path)
-            let parentExists = FileManager.default.fileExists(atPath: destURL.deletingLastPathComponent().path)
-            if parentExists {
+            if BackupEngine.isVolumeReallyMounted(destURL.deletingLastPathComponent().path) {
                 try? FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
             }
-            // Re-check after potential creation
             if !FileManager.default.fileExists(atPath: config.destination.path) {
                 currentState = .diskAbsent
                 return currentState
@@ -40,11 +39,13 @@ class StatusManager {
             if status.state == "running" {
                 let lockPath = config.destination.path + "/rustymacbackup.lock"
                 let lockAlive: Bool = {
-                    guard let pidStr = try? String(contentsOfFile: lockPath, encoding: .utf8),
-                          let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    // F-01: lock file now contains "PID\nTIMESTAMP\nUUID" — read first line only
+                    guard let content = try? String(contentsOfFile: lockPath, encoding: .utf8),
+                          let firstLine = content.split(separator: "\n").first.map(String.init),
+                          let pid = pid_t(firstLine.trimmingCharacters(in: .whitespaces)) else {
                         return false
                     }
-                    return kill(pid, 0) == 0  // 0 = alive, -1 = dead/zombie
+                    return kill(pid, 0) == 0
                 }()
                 if lockAlive {
                     currentState = .running
@@ -56,6 +57,11 @@ class StatusManager {
                 fixed.state = "idle"
                 try? statusWriter.write(status: fixed)
                 lastStatus = fixed
+            }
+            // F-02: "cancelled" is a terminal state — treat as idle, not error
+            if status.state == "cancelled" {
+                currentState = .idle
+                return currentState
             }
             if status.state == "error" {
                 currentState = .error

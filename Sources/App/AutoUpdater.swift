@@ -46,9 +46,11 @@ enum AutoUpdater {
 
     // MARK: - Download & Install
 
-    /// Downloads the .app.zip for `version`, rsync-replaces the running app in-place, then relaunches.
+    /// Downloads the .app.zip for `version`, verifies code signature, rsync-replaces the
+    /// running app in-place with rollback on failure, then relaunches.
     /// In-place replacement preserves macOS Full Disk Access permissions.
-    static func downloadAndInstall(version: String) async throws {
+    static func downloadAndInstall(version: String,
+                                   onPhase: ((UpdatePhase) -> Void)? = nil) async throws {
         let zipName = "RustyMacBackup-\(version).app.zip"
         let downloadURL = URL(string: "https://github.com/\(repoSlug)/releases/download/v\(version)/\(zipName)")!
 
@@ -57,9 +59,14 @@ enum AutoUpdater {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
+        // Phase 1: Download
+        onPhase?(.downloading)
         Log.info("Downloading \(zipName)…")
         let zipPath = tempDir.appendingPathComponent(zipName)
-        let (localURL, _) = try await URLSession.shared.download(from: downloadURL)
+        let (localURL, response) = try await URLSession.shared.download(from: downloadURL)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw UpdateError.downloadFailed(http.statusCode)
+        }
         try FileManager.default.moveItem(at: localURL, to: zipPath)
 
         Log.info("Unzipping…")
@@ -70,15 +77,45 @@ enum AutoUpdater {
             throw UpdateError.badZip
         }
 
+        // Phase 2: Verify code signature and bundle identity
+        onPhase?(.verifying)
+        Log.info("Verifying signature…")
+        try shell("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path])
+
+        let newBundleID = Bundle(url: newApp)?.bundleIdentifier
+        let currentBundleID = Bundle.main.bundleIdentifier
+        if let newID = newBundleID, let curID = currentBundleID, newID != curID {
+            throw UpdateError.bundleIdentityMismatch(newID, curID)
+        }
+
         let currentApp = Bundle.main.bundleURL
+        let rollbackDir = tempDir.appendingPathComponent("rollback")
+
+        // Phase 3: Atomic install with rollback
+        onPhase?(.installing)
+        Log.info("Creating rollback snapshot…")
+        try FileManager.default.copyItem(
+            at: currentApp.appendingPathComponent("Contents"),
+            to: rollbackDir
+        )
 
         Log.info("Installing in-place over \(currentApp.path)…")
-        // rsync replaces Contents without changing the .app path → FDA preserved
-        try shell("/usr/bin/rsync", [
-            "-a", "--delete",
-            newApp.appendingPathComponent("Contents").path + "/",
-            currentApp.appendingPathComponent("Contents").path + "/"
-        ])
+        do {
+            try shell("/usr/bin/rsync", [
+                "-a", "--delete",
+                newApp.appendingPathComponent("Contents").path + "/",
+                currentApp.appendingPathComponent("Contents").path + "/"
+            ])
+        } catch {
+            // Rollback: restore saved Contents/ before propagating error
+            Log.error("rsync failed — rolling back: \(error)")
+            try? shell("/usr/bin/rsync", [
+                "-a", "--delete",
+                rollbackDir.path + "/",
+                currentApp.appendingPathComponent("Contents").path + "/"
+            ])
+            throw error
+        }
 
         Log.info("Update complete — relaunching")
         DispatchQueue.main.async {
@@ -113,10 +150,16 @@ enum AutoUpdater {
 
     enum UpdateError: LocalizedError {
         case badZip
+        case downloadFailed(Int)
+        case signatureInvalid
+        case bundleIdentityMismatch(String, String)
         case processFailed(String, Int32)
         var errorDescription: String? {
             switch self {
             case .badZip: return "Il file di aggiornamento non è valido"
+            case .downloadFailed(let code): return "Download fallito (HTTP \(code))"
+            case .signatureInvalid: return "La firma del pacchetto di aggiornamento non è valida"
+            case .bundleIdentityMismatch(let new, let cur): return "Bundle ID mismatch: \(new) ≠ \(cur)"
             case .processFailed(let cmd, let code): return "\(cmd) fallito con codice \(code)"
             }
         }

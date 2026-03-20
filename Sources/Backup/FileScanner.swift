@@ -21,6 +21,7 @@ enum FileScanner {
         sources: [URL],
         basePaths: [String],
         excludeFilter: ExcludeFilter,
+        onTraversalError: ((String, Error) -> Void)? = nil,
         handler: (FileEntry) -> Bool
     ) {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey,
@@ -62,7 +63,12 @@ enum FileScanner {
                 at: source,
                 includingPropertiesForKeys: keys,
                 options: [.skipsPackageDescendants],
-                errorHandler: { _, _ in true }
+                // F-08: Record traversal errors instead of silently swallowing them.
+                // Distinguishes permission skips from genuine I/O failures.
+                errorHandler: { url, error in
+                    onTraversalError?(url.path, error)
+                    return true  // continue traversal past unreadable entries
+                }
             ) else { continue }
 
             var batchCount = 0

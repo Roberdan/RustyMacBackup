@@ -42,7 +42,6 @@ enum BackupEngine {
         IOPriority.setIOPriority(throttle: onBattery)
         Log.info("I/O priority: \(onBattery ? "throttled (battery)" : "full speed (AC)")")
         guard preflightWriteTest(at: destURL) else { throw BackupError.notWritable(destPath) }
-        cleanStaleInProgress(at: destURL)
 
         if diskFreeSpace(at: destPath) < MIN_FREE_SPACE {
             let _ = RetentionManager.pruneBackups(at: destURL, policy: config.retention, dryRun: false)
@@ -61,13 +60,15 @@ enum BackupEngine {
         let lockPath = destURL.appendingPathComponent("rustymacbackup.lock").path
         try acquireLock(at: lockPath)
         defer { try? FileManager.default.removeItem(atPath: lockPath) }
+        // F-01: clean stale dirs only AFTER acquiring the lock
+        cleanStaleInProgress(at: destURL)
 
         let startTime = Date()
         var status = BackupStatusFile()
         status.state = "running"
         status.startedAt = ISO8601DateFormatter().string(from: startTime)
         status.currentFile = "Avvio backup..."
-        try? statusWriter.write(status: status)
+        do { try statusWriter.write(status: status) } catch { Log.error("Status write failed at start: \(error)") }
 
         let excludeFilter = ExcludeFilter(patterns: config.exclude.patterns)
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -81,6 +82,7 @@ enum BackupEngine {
         final class Counters: @unchecked Sendable {
             var discovered: Int64 = 0
             var walkerDone: Bool = false
+            var traversalErrors: [(path: String, error: Error)] = []
         }
         let counters = Counters()
 
@@ -88,7 +90,10 @@ enum BackupEngine {
 
         let walkerTask = Task.detached(priority: .utility) {
             FileScanner.walk(sources: sourceURLs, basePaths: homeBasePaths,
-                           excludeFilter: excludeFilter) { entry in
+                           excludeFilter: excludeFilter,
+                           onTraversalError: { path, error in
+                               counters.traversalErrors.append((path: path, error: error))
+                           }) { entry in
                 if shouldCancel { return false }
                 counters.discovered += 1
                 continuation.yield(entry)
@@ -187,6 +192,18 @@ enum BackupEngine {
 
         walkerTask.cancel()
 
+        // F-08: Merge traversal errors (e.g. permission denied on subtrees) into error list
+        errorList.append(contentsOf: counters.traversalErrors)
+
+        // F-02: Do NOT rename to final snapshot if cancelled — partial backup must not look valid.
+        if shouldCancel {
+            try? FileManager.default.removeItem(at: inProgressURL)
+            status.state = "cancelled"
+            status.currentFile = "Backup annullato"
+            do { try statusWriter.write(status: status) } catch { Log.error("Status write failed on cancel: \(error)") }
+            return
+        }
+
         let finalURL = destURL.appendingPathComponent(timestamp)
         try FileManager.default.moveItem(at: inProgressURL, to: finalURL)
 
@@ -197,7 +214,8 @@ enum BackupEngine {
         Log.info("Environment snapshot complete")
 
         if !errorList.isEmpty {
-            try? statusWriter.writeErrors(errors: categorizeErrors(errorList))
+            // F-06: Use ErrorReporter for semantic keys (permission_denied, not_found, etc.)
+            try? statusWriter.writeErrors(errors: ErrorReporter.categorizeErrors(errorList))
         }
 
         let totalFiles = processedCount
@@ -211,6 +229,6 @@ enum BackupEngine {
         status.etaSecs = 0
         status.currentFile = ""
         status.errors = UInt64(errorList.count)
-        try? statusWriter.write(status: status)
+        do { try statusWriter.write(status: status) } catch { Log.error("Status write failed at completion: \(error)") }
     }
 }

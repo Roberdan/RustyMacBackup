@@ -5,9 +5,17 @@ import Darwin
 
 extension BackupEngine {
 
+    // F-03: Verify via mountedVolumeURLs — statfs() passes on stale /Volumes/ mountpoints
+    // that point to internal disk paths, causing backup to silently target the wrong disk.
     static func isVolumeReallyMounted(_ path: String) -> Bool {
-        var buf = statfs()
-        return statfs(path, &buf) == 0
+        guard let vols = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil,
+            options: [.skipHiddenVolumes]) else { return false }
+        let target = URL(fileURLWithPath: path).standardized.path
+        return vols.contains { vol in
+            let vp = vol.standardized.path
+            return target == vp || target.hasPrefix(vp == "/" ? vp : vp + "/")
+        }
     }
 
     static func preflightWriteTest(at destURL: URL) -> Bool {
@@ -21,11 +29,27 @@ extension BackupEngine {
         }
     }
 
+    // F-01: Check age (>2h) and active lock before removing — avoids deleting dirs
+    // that belong to a concurrent backup that hasn't yet acquired the lock.
     static func cleanStaleInProgress(at destURL: URL) {
         guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: destURL, includingPropertiesForKeys: nil) else { return }
+            at: destURL,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: []) else { return }
+        let staleThreshold: TimeInterval = 2 * 3600
+        let lockPath = destURL.appendingPathComponent("rustymacbackup.lock").path
+        let activePID: Int32? = {
+            guard let content = try? String(contentsOfFile: lockPath, encoding: .utf8) else { return nil }
+            let first = content.split(separator: "\n").first.map(String.init) ?? content
+            return Int32(first.trimmingCharacters(in: .whitespaces))
+        }()
         for url in contents where url.lastPathComponent.hasPrefix("in-progress-") {
+            let values = try? url.resourceValues(forKeys: [.creationDateKey])
+            let age = Date().timeIntervalSince(values?.creationDate ?? .distantPast)
+            guard age > staleThreshold else { continue }
+            if let pid = activePID, Darwin.kill(pid, 0) == 0 { continue }
             try? FileManager.default.removeItem(at: url)
+            Log.info("Cleaned stale in-progress dir: \(url.lastPathComponent)")
         }
     }
 
@@ -50,35 +74,26 @@ extension BackupEngine {
         return candidates.last
     }
 
+    // F-01: Lock file format: "PID\nTIMESTAMP\nSESSION_UUID" — richer stale detection.
     static func acquireLock(at path: String) throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: path) {
-            if let pidStr = try? String(contentsOfFile: path, encoding: .utf8),
-               let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
-               Darwin.kill(pid, 0) == 0 {
-                throw BackupError.lockExists
+            if let content = try? String(contentsOfFile: path, encoding: .utf8) {
+                let first = content.split(separator: "\n").first.map(String.init) ?? content
+                if let pid = Int32(first.trimmingCharacters(in: .whitespaces)),
+                   Darwin.kill(pid, 0) == 0 {
+                    throw BackupError.lockExists
+                }
             }
             try? fm.removeItem(atPath: path)
         }
         let pid = ProcessInfo.processInfo.processIdentifier
-        try String(pid).write(toFile: path, atomically: true, encoding: .utf8)
+        let content = "\(pid)\n\(ISO8601DateFormatter().string(from: Date()))\n\(UUID().uuidString)"
+        try content.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    static func categorizeErrors(_ errorList: [(path: String, error: Error)]) -> BackupErrorFile {
-        var categories: [String: ErrorCategoryInfo] = [:]
-        for item in errorList {
-            let key = "\(type(of: item.error))"
-            var info = categories[key] ?? ErrorCategoryInfo(count: 0, files: [])
-            info.count += 1
-            if info.files.count < 20 { info.files.append(item.path) }
-            categories[key] = info
-        }
-        return BackupErrorFile(
-            total: errorList.count,
-            timestamp: ISO8601DateFormatter().string(from: Date()),
-            categories: categories
-        )
-    }
+    // F-06: Delegate to ErrorReporter — semantic keys (permission_denied, not_found, etc.)
+    // Removed duplicate categorizeErrors() that used Swift type names as keys.
 
     static func formatBytes(_ bytes: UInt64) -> String {
         if bytes >= 1_073_741_824 { return String(format: "%.1f GB", Double(bytes) / 1_073_741_824) }
