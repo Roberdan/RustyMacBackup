@@ -1,24 +1,34 @@
 #!/bin/bash
 set -euo pipefail
 
-# RustyMacBackup — Swift Build Script
-# Builds the native .app bundle
-
 APP_NAME="RustyMacBackup"
-VERSION="1.0.0"
+VERSION="2.0.0"
 BUILD_DIR="build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BINARY="$BUILD_DIR/$APP_NAME"
 SWIFT_FILES=$(find Sources -name "*.swift" -type f)
 MACOS_TARGET="arm64-apple-macos14.0"
 
-echo "🔨 Building $APP_NAME v$VERSION..."
+# Signing identity -- Developer ID for distribution outside App Store
+# Falls back to ad-hoc if Developer ID not available
+# Find a Developer ID certificate for distribution (any team)
+# Override with: CODESIGN_IDENTITY="your cert" ./build.sh
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY="$CODESIGN_IDENTITY"
+    SIGN_LABEL="custom ($SIGN_IDENTITY)"
+elif DEVID_HASH=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | awk '{print $2}'); [ -n "$DEVID_HASH" ]; then
+    SIGN_IDENTITY="$DEVID_HASH"
+    SIGN_LABEL="Developer ID (Gatekeeper OK on any Mac)"
+else
+    SIGN_IDENTITY="-"
+    SIGN_LABEL="ad-hoc (right-click > Open on new Mac)"
+fi
 
-# Create build directory
+echo "Building $APP_NAME v$VERSION..."
+
 mkdir -p "$BUILD_DIR"
 
-# Compile all Swift files
-echo "  Compiling Swift sources..."
+echo "  Compiling..."
 swiftc \
     -O \
     -target "$MACOS_TARGET" \
@@ -28,21 +38,12 @@ swiftc \
     -o "$BINARY" \
     $SWIFT_FILES
 
-echo "  ✅ Compilation successful"
-
-# Create .app bundle structure
-echo "  Creating .app bundle..."
+echo "  Bundling..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
-
-# Copy binary
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-
-# Copy Info.plist
 cp Sources/App/Info.plist "$APP_BUNDLE/Contents/"
-
-# Copy icons
 if [ -d "Resources/icons" ]; then
     cp Resources/icons/*.png "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
 fi
@@ -50,19 +51,13 @@ if [ -f "Resources/AppIcon.icns" ]; then
     cp Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/"
 fi
 
-echo "  ✅ Bundle created: $APP_BUNDLE"
-
-# Ad-hoc code sign with consistent identifier
-# This ensures macOS FDA permission persists across updates
-echo "  Signing..."
-codesign --force --deep --sign - \
+echo "  Signing with: $SIGN_IDENTITY"
+codesign --force --deep --options runtime \
+    --sign "$SIGN_IDENTITY" \
     --identifier "com.roberdan.rusty-mac-backup" \
-    "$APP_BUNDLE" 2>/dev/null || true
-echo "  ✅ Signed (com.roberdan.rusty-mac-backup)"
+    "$APP_BUNDLE"
 
 echo ""
-echo "🎉 Build complete!"
-echo "   App: $APP_BUNDLE"
-echo "   CLI: $BINARY version → $($BINARY version 2>/dev/null || echo 'N/A')"
-echo ""
-echo "   Install: ./install.sh"
+echo "Build complete: $APP_BUNDLE"
+echo "CLI: $($BINARY version 2>/dev/null || echo 'N/A')"
+echo "Signed: $SIGN_LABEL"

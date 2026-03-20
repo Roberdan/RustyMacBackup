@@ -195,6 +195,7 @@ enum ConfigDiscovery {
         ("Editor", "Cursor extensions", ["~/.cursor/extensions"], false),
         ("Editor", "Zed", ["~/.config/zed"], false),
         ("Editor", "Xcode UserData", ["~/Library/Developer/Xcode/UserData"], false),
+        ("Editor", "Xcode Provisioning", ["~/Library/MobileDevice/Provisioning Profiles"], false),
 
         // AI/LLM tools
         // Claude CLI -- specific safe subdirs only (full ~/.claude/ is 16 GB+)
