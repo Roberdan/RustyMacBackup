@@ -232,14 +232,7 @@ func generateDefaultConfig(backupPath: String) -> Config {
     // Always include the backup config itself (for portability)
     paths.append("~/.config/rusty-mac-backup")
 
-    // Add ~/GitHub if it exists
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    if FileManager.default.fileExists(atPath: home + "/GitHub") {
-        paths.append("~/GitHub")
-    }
-    if FileManager.default.fileExists(atPath: home + "/Developer") {
-        paths.append("~/Developer")
-    }
+    // Repos are discovered individually (~/GitHub/*, ~/Developer/*, ~/Projects/*)
 
     let defaultExcludes = [
         // macOS system junk (CCC-recommended)

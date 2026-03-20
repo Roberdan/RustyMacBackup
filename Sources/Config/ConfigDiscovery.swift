@@ -28,6 +28,28 @@ enum ConfigDiscovery {
                 ))
             }
         }
+
+        // Dynamic: discover individual Git repos in ~/GitHub, ~/Developer, ~/Projects
+        for repoDir in ["~/GitHub", "~/Developer", "~/Projects"] {
+            let expanded = expand(repoDir)
+            guard fm.fileExists(atPath: expanded),
+                  let contents = try? fm.contentsOfDirectory(atPath: expanded) else { continue }
+            for name in contents.sorted() {
+                let repoPath = expanded + "/" + name
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: repoPath, isDirectory: &isDir), isDir.boolValue else { continue }
+                // Skip hidden dirs and non-repo junk
+                if name.hasPrefix(".") || name == "node_modules" { continue }
+                let contracted = contract(repoPath)
+                found.append(DiscoveredConfig(
+                    category: "Repos",
+                    label: name,
+                    paths: [contracted],
+                    sensitive: false
+                ))
+            }
+        }
+
         return found
     }
 
