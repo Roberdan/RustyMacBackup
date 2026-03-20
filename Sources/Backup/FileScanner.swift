@@ -10,7 +10,12 @@ struct FileEntry {
 /// Streaming file scanner -- yields files one at a time via callback.
 /// Never loads entire file tree into memory.
 /// Skips symbolic links to prevent loops and TCC-protected target access.
+/// Bird-safe: yields in batches with micro-pauses to avoid triggering
+/// iCloud eviction cascades (CCC uses similar technique).
 enum FileScanner {
+    /// Micro-pause every N files to let bird/iCloud settle
+    static let BIRD_SAFE_BATCH_SIZE = 200
+    static let BIRD_SAFE_PAUSE_US: UInt32 = 50_000 // 50ms
     static func walk(
         sources: [URL],
         basePaths: [String],
@@ -47,10 +52,11 @@ enum FileScanner {
             guard let enumerator = FileManager.default.enumerator(
                 at: source,
                 includingPropertiesForKeys: keys,
-                options: [],
+                options: [.skipsPackageDescendants],
                 errorHandler: { _, _ in true }
             ) else { continue }
 
+            var batchCount = 0
             while let url = enumerator.nextObject() as? URL {
                 let fullPath = url.path
                 let relativePath: String
@@ -58,6 +64,11 @@ enum FileScanner {
                     relativePath = String(fullPath.dropFirst(basePath.count))
                 } else {
                     relativePath = url.lastPathComponent
+                }
+
+                // Skip iCloud placeholder files (evicted by bird)
+                if url.lastPathComponent.hasSuffix(".icloud") && url.lastPathComponent.hasPrefix(".") {
+                    continue
                 }
 
                 if excludeFilter.shouldSkipDirectory(relativePath: relativePath) {
@@ -89,6 +100,13 @@ enum FileScanner {
                     mtime: mtime
                 )
                 if !handler(entry) { return }
+
+                // Bird-safe: pause every N files to let iCloud settle
+                batchCount += 1
+                if batchCount >= BIRD_SAFE_BATCH_SIZE {
+                    batchCount = 0
+                    usleep(BIRD_SAFE_PAUSE_US)
+                }
             }
         }
     }
