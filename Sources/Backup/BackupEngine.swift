@@ -27,7 +27,13 @@ enum BackupEngine {
             }
         }
         guard isVolumeReallyMounted(destPath) else { throw BackupError.volumeNotMounted(destPath) }
-        IOPriority.setIOPriority(throttle: IOPriority.isOnBattery())
+        // Warn if iCloud Desktop & Documents is active (can cause bird evictions)
+        if isiCloudDesktopActive() {
+            Log.warn("iCloud Desktop & Documents sync is ACTIVE -- using bird-safe mode")
+        }
+        // Always throttle I/O to avoid triggering bird/iCloud eviction cascades
+        IOPriority.setIOPriority(throttle: true)
+        Log.info("I/O priority: throttled (bird-safe mode)")
         guard preflightWriteTest(at: destURL) else { throw BackupError.notWritable(destPath) }
         cleanStaleInProgress(at: destURL)
 
@@ -83,9 +89,10 @@ enum BackupEngine {
         var errorList: [(path: String, error: Error)] = []
         var processedCount: UInt64 = 0
 
+        // Limit concurrency to avoid overwhelming bird/iCloud
         try await withThrowingTaskGroup(of: FileResult.self) { group in
             var activeTasks = 0
-            let maxConcurrent = 8
+            let maxConcurrent = 4
 
             for await file in stream {
                 if shouldCancel { break }

@@ -129,4 +129,11 @@ extension BackupEngine {
             errors.append((path: path, error: err))
         }
     }
+
+    /// Check if iCloud Desktop & Documents sync is enabled.
+    static func isiCloudDesktopActive() -> Bool {
+        let desktop = UserDefaults(suiteName: "com.apple.finder")?.bool(forKey: "FXICloudDriveDesktop") ?? false
+        let docs = UserDefaults(suiteName: "com.apple.finder")?.bool(forKey: "FXICloudDriveDocuments") ?? false
+        return desktop || docs
+    }
 }
