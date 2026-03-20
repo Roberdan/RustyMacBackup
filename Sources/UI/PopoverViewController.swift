@@ -1,50 +1,47 @@
 import Cocoa
 
 protocol PopoverDelegate: AnyObject {
-    func popoverDidRequestBackup()
     func popoverDidRequestStop()
     func popoverDidRequestEject()
     func popoverDidRequestOpenFolder()
-    func popoverDidRequestAddFolder()
     func popoverDidSelectDisk(_ volumeURL: URL)
-    func popoverDidTogglePath(_ path: String, enabled: Bool)
-    func popoverDidRequestRestore(_ snapshotURL: URL, items: [String], brewInstall: Bool)
-    func popoverDidRequestUndoRestore()
     func popoverDidRequestQuit()
+    func popoverDidStartBackup(selectedPaths: [String])
+    func popoverDidStartRestore(snapshotURL: URL, items: [String], brewInstall: Bool)
+    func popoverDidTogglePath(_ path: String, enabled: Bool)
+    func popoverDidRequestUndoRestore()
     func popoverGetState() -> AppState
     func popoverGetStatus() -> BackupStatusFile?
     func popoverGetConfig() -> Config?
 }
 
-class PopoverViewController: NSViewController, ToolToggleDelegate, RestoreWindowDelegate {
+class PopoverViewController: NSViewController, TreeWindowDelegate {
     weak var popoverDelegate: PopoverDelegate?
+    private var isSetupDone = false
+    private var treeWindow: TreeWindowController?
 
+    // UI elements
     private let outerStack = NSStackView()
     private let headerLabel = NSTextField(labelWithString: "RustyMacBackup")
     private let statusLabel = NSTextField(labelWithString: "")
-    private let backupButton = NSButton()
+    private let statsLabel = NSTextField(labelWithString: "")
     private let progressBar = ProgressBarView()
     private let progressLabel = NSTextField(labelWithString: "")
-    private let statsLabel = NSTextField(labelWithString: "")
     private var diskStack = NSStackView()
     private let diskHeader = NSTextField(labelWithString: "")
-    private var restoreStack = NSStackView()
-    private let restoreHeader = NSTextField(labelWithString: "")
-    private let toolsHeaderRow = NSStackView()
-    private let toolsHeaderLabel = NSTextField(labelWithString: "")
-    private var toolsScroll = NSScrollView()
-    private var toolsStack = NSStackView()
-    private var categoryViews: [ToolsCategoryView] = []
-    private var undoRestoreButton: NSButton?
-    private var isSetupComplete = false
+    private var restoreRow: NSView?
+    private var undoBtn: NSButton?
+    private var backupBtn: NSButton!
+    private var stopBtn: NSButton!
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 340))
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        setupUI()
+        buildUI()
+        isSetupDone = true
         refresh()
     }
 
@@ -53,8 +50,9 @@ class PopoverViewController: NSViewController, ToolToggleDelegate, RestoreWindow
         refresh()
     }
 
-    private func setupUI() {
-        // Vibrancy background
+    // MARK: - Build
+
+    private func buildUI() {
         let effect = NSVisualEffectView()
         effect.blendingMode = .behindWindow
         effect.material = .popover
@@ -65,360 +63,202 @@ class PopoverViewController: NSViewController, ToolToggleDelegate, RestoreWindow
 
         outerStack.orientation = .vertical
         outerStack.alignment = .leading
-        outerStack.spacing = 4
+        outerStack.spacing = 6
         outerStack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
         outerStack.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(outerStack)
         pin(outerStack, to: effect)
 
-        // -- Header row --
-        let headerRow = makeRow()
+        // Header
         headerLabel.font = .boldSystemFont(ofSize: 15)
-        headerLabel.textColor = .labelColor
-        headerRow.addArrangedSubview(headerLabel)
-        headerRow.addArrangedSubview(hSpacer())
-        backupButton.bezelStyle = .rounded
-        backupButton.controlSize = .regular
-        backupButton.target = self
-        backupButton.action = #selector(backupTapped)
-        headerRow.addArrangedSubview(backupButton)
-        addToOuter(headerRow)
-
+        add(headerLabel)
         statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = MLColor.secondary
-        addToOuter(statusLabel)
-        addSep()
+        statusLabel.textColor = .secondaryLabelColor
+        add(statusLabel)
+        sep()
 
-        // -- Stats --
+        // Stats
         statsLabel.font = .systemFont(ofSize: 12)
-        statsLabel.textColor = .labelColor
-        statsLabel.maximumNumberOfLines = 2
-        addToOuter(statsLabel)
+        statsLabel.maximumNumberOfLines = 3
+        add(statsLabel)
 
-        // -- Progress --
+        // Progress
         progressBar.translatesAutoresizingMaskIntoConstraints = false
-        progressBar.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        progressBar.widthAnchor.constraint(equalToConstant: 292).isActive = true
-        addToOuter(progressBar)
+        progressBar.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        progressBar.widthAnchor.constraint(equalToConstant: 272).isActive = true
+        add(progressBar)
         progressLabel.font = .systemFont(ofSize: 11)
-        progressLabel.textColor = MLColor.secondary
-        addToOuter(progressLabel)
-        addSep()
+        progressLabel.textColor = .secondaryLabelColor
+        add(progressLabel)
+        sep()
 
-        // -- Disk selection (setup only) --
+        // Disk selection (setup)
         diskHeader.font = .systemFont(ofSize: 12, weight: .semibold)
-        diskHeader.textColor = .labelColor
         diskHeader.stringValue = "Select Backup Disk"
-        addToOuter(diskHeader)
+        add(diskHeader)
         diskStack.orientation = .vertical
         diskStack.alignment = .leading
         diskStack.spacing = 4
-        addToOuter(diskStack)
-        addSep()
+        add(diskStack)
+        sep()
 
-        // -- Restore section (visible when backups found but no config) --
-        restoreHeader.font = .systemFont(ofSize: 12, weight: .semibold)
-        restoreHeader.textColor = .labelColor
-        restoreHeader.stringValue = "Restore from Backup"
-        addToOuter(restoreHeader)
-        restoreStack.orientation = .vertical
-        restoreStack.alignment = .leading
-        restoreStack.spacing = 4
-        addToOuter(restoreStack)
-        addSep()
+        // Action buttons
+        backupBtn = makeActionBtn("Backup...", icon: "arrow.up.doc", action: #selector(backupTapped))
+        add(backupBtn)
+        stopBtn = makeActionBtn("Stop Backup", icon: "stop.circle", action: #selector(stopTapped))
+        stopBtn.contentTintColor = .systemRed
+        add(stopBtn)
 
-        // -- Tools section header --
-        toolsHeaderRow.orientation = .horizontal
-        toolsHeaderRow.alignment = .centerY
-        toolsHeaderRow.spacing = 8
-        toolsHeaderRow.translatesAutoresizingMaskIntoConstraints = false
-        toolsHeaderRow.widthAnchor.constraint(equalToConstant: 292).isActive = true
-        toolsHeaderLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        toolsHeaderLabel.textColor = .labelColor
-        toolsHeaderRow.addArrangedSubview(toolsHeaderLabel)
-        toolsHeaderRow.addArrangedSubview(hSpacer())
-        let selectAllBtn = NSButton(title: "All", target: self, action: #selector(selectAllTapped))
-        selectAllBtn.bezelStyle = .inline
-        selectAllBtn.font = .systemFont(ofSize: 11, weight: .medium)
-        toolsHeaderRow.addArrangedSubview(selectAllBtn)
-        let addBtn = NSButton(title: "+ Add", target: self, action: #selector(addFolderTapped))
-        addBtn.bezelStyle = .inline
-        addBtn.font = .systemFont(ofSize: 11, weight: .medium)
-        toolsHeaderRow.addArrangedSubview(addBtn)
-        addToOuter(toolsHeaderRow)
+        // Restore row
+        let rRow = makeActionBtn("Restore...", icon: "arrow.down.doc", action: #selector(restoreTapped))
+        restoreRow = rRow
+        add(rRow)
 
-        // -- Scrollable tools list --
-        toolsStack.orientation = .vertical
-        toolsStack.alignment = .leading
-        toolsStack.spacing = 6
-        toolsStack.translatesAutoresizingMaskIntoConstraints = false
+        // Undo
+        let ub = makeActionBtn("Undo Last Restore", icon: "arrow.uturn.backward", action: #selector(undoTapped))
+        ub.contentTintColor = .systemOrange
+        undoBtn = ub
+        add(ub)
 
-        let clipView = NSClipView()
-        clipView.documentView = toolsStack
-        clipView.drawsBackground = false
-        toolsScroll.contentView = clipView
-        toolsScroll.drawsBackground = false
-        toolsScroll.hasVerticalScroller = true
-        toolsScroll.autohidesScrollers = true
-        toolsScroll.borderType = .noBorder
-        toolsScroll.translatesAutoresizingMaskIntoConstraints = false
-        toolsScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
-        toolsScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
-        toolsScroll.widthAnchor.constraint(equalToConstant: 292).isActive = true
-        addToOuter(toolsScroll)
-        addSep()
-
-        // -- Actions --
-        addAction("Open Backup Folder", icon: "folder", action: #selector(openFolderTapped))
-        addAction("Eject Disk", icon: "eject", action: #selector(ejectTapped))
-        let undoBtn = NSButton(title: "Undo Last Restore", target: self, action: #selector(undoRestoreTapped))
-        undoBtn.bezelStyle = .inline
-        undoBtn.isBordered = false
-        undoBtn.font = .systemFont(ofSize: 13)
-        undoBtn.alignment = .left
-        undoBtn.contentTintColor = MLColor.warning
-        if let img = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Undo Restore") {
-            undoBtn.image = img
-            undoBtn.imagePosition = .imageLeading
-        }
-        undoRestoreButton = undoBtn
-        addToOuter(undoBtn)
-        addSep()
-        addAction("Quit", icon: "power", action: #selector(quitTapped), key: "q")
-
-        isSetupComplete = true
+        sep()
+        add(makeActionBtn("Open Backup Folder", icon: "folder", action: #selector(openFolderTapped)))
+        add(makeActionBtn("Eject Disk", icon: "eject", action: #selector(ejectTapped)))
+        sep()
+        let quitBtn = makeActionBtn("Quit", icon: "power", action: #selector(quitTapped))
+        quitBtn.keyEquivalent = "q"
+        quitBtn.keyEquivalentModifierMask = .command
+        add(quitBtn)
     }
 
     // MARK: - Refresh
 
     func refresh() {
-        guard isSetupComplete, let delegate = popoverDelegate else { return }
+        guard isSetupDone, let delegate = popoverDelegate else { return }
         let state = delegate.popoverGetState()
         let status = delegate.popoverGetStatus()
         let config = delegate.popoverGetConfig()
+        let running = state == .running
 
-        // Header button
+        // Status
         switch state {
-        case .needsSetup:
-            statusLabel.stringValue = "Setup required -- select backup disk"
-            backupButton.title = "Setup"
-            backupButton.isEnabled = false
-        case .idle:
-            statusLabel.stringValue = "Ready"
-            backupButton.title = "Backup Now"
-            backupButton.isEnabled = true
-        case .running:
-            statusLabel.stringValue = "Backup in progress..."
-            backupButton.title = "Stop"
-            backupButton.isEnabled = true
-        case .error:
-            statusLabel.stringValue = "Last backup failed"
-            backupButton.title = "Retry"
-            backupButton.isEnabled = true
-        case .diskAbsent:
-            let name = config.map {
-                URL(fileURLWithPath: $0.destination.path).deletingLastPathComponent().lastPathComponent
-            } ?? "disk"
-            statusLabel.stringValue = "Disk \"\(name)\" not connected"
-            backupButton.title = "Backup Now"
-            backupButton.isEnabled = false
-        case .stale:
-            statusLabel.stringValue = "Backup overdue (>24h)"
-            backupButton.title = "Backup Now"
-            backupButton.isEnabled = true
+        case .needsSetup: statusLabel.stringValue = "Setup required"
+        case .idle:       statusLabel.stringValue = "Ready"
+        case .running:    statusLabel.stringValue = "Backup in progress..."
+        case .error:      statusLabel.stringValue = "Last backup failed"
+        case .diskAbsent: statusLabel.stringValue = "Backup disk not connected"
+        case .stale:      statusLabel.stringValue = "Backup overdue (>24h)"
         }
 
         // Stats
+        var stats = ""
         if let s = status, !s.lastCompleted.isEmpty {
-            statsLabel.stringValue = "Last: \(Fmt.timeAgo(from: s.lastCompleted))  --  \(Fmt.formatFileCount(s.filesTotal)) files  --  \(Fmt.formatBytes(s.bytesCopied))"
+            stats = "Last: \(Fmt.timeAgo(from: s.lastCompleted))  --  \(Fmt.formatFileCount(s.filesTotal)) files  --  \(Fmt.formatBytes(s.bytesCopied))"
         } else {
-            statsLabel.stringValue = "No backups yet"
+            stats = "No backups yet"
         }
         if let c = config {
+            let pathCount = c.source.paths.count
+            stats += "\n\(pathCount) sources configured"
             let (free, total) = DiskDiagnostics.diskSpace(at: c.destination.path)
             if total > 0 {
                 let vol = URL(fileURLWithPath: c.destination.path).deletingLastPathComponent().lastPathComponent
-                statsLabel.stringValue += "\n\(vol): \(Fmt.formatBytes(free)) free / \(Fmt.formatBytes(total))"
+                stats += "\n\(vol): \(Fmt.formatBytes(free)) free"
             }
         }
-
-        // Disk selection (setup mode only)
-        let showDisks = state == .needsSetup
-        diskHeader.isHidden = !showDisks
-        diskStack.isHidden = !showDisks
-        if showDisks { rebuildDiskList() }
-
-        // Restore section -- check for backups but don't crash if volumes are in flux
-        var backups: [(volume: String, backupDir: URL, snapshots: [String])] = []
-        if let config = config, FileManager.default.fileExists(atPath: config.destination.path) {
-            backups = RestoreEngine.findBackupSnapshots()
-        }
-        let showRestore = !backups.isEmpty && state != .needsSetup
-        restoreHeader.isHidden = !showRestore
-        restoreStack.isHidden = !showRestore
-        if showRestore { rebuildRestoreList(backups: backups) }
+        statsLabel.stringValue = stats
 
         // Progress
-        let running = state == .running
-        isBackupRunning = running
         progressBar.isHidden = !running
         progressLabel.isHidden = !running
         if running, let s = status {
             if s.filesTotal > 0 { progressBar.progress = CGFloat(s.filesDone) / CGFloat(s.filesTotal) }
             let pct = s.filesTotal > 0 ? "\(Int(Double(s.filesDone) / Double(s.filesTotal) * 100))%" : ""
-            progressLabel.stringValue = "\(pct)  \(Fmt.formatBytes(s.bytesPerSec))/s  \(s.etaSecs > 0 ? "ETA: \(Fmt.formatDuration(Double(s.etaSecs)))" : "scanning...")"
+            progressLabel.stringValue = "\(pct)  \(Fmt.formatBytes(s.bytesPerSec))/s  \(s.etaSecs > 0 ? "ETA: \(Fmt.formatDuration(Double(s.etaSecs)))" : "")"
         }
 
-        // Undo restore -- visible only if pre-restore backups exist
-        undoRestoreButton?.isHidden = !RestoreEngine.hasPreRestoreBackup()
+        // Disk setup
+        let showDisk = state == .needsSetup
+        diskHeader.isHidden = !showDisk
+        diskStack.isHidden = !showDisk
+        if showDisk { rebuildDiskList() }
 
-        // Tools -- rebuild list (skip during running to avoid flicker, but show if empty)
-        if !running || categoryViews.isEmpty { rebuildToolsList(config: config) }
+        // Buttons
+        backupBtn.isHidden = running || state == .needsSetup || state == .diskAbsent
+        stopBtn.isHidden = !running
+
+        // Restore -- visible when backups exist
+        let hasBackups = config != nil && !RestoreEngine.findBackupSnapshots().isEmpty
+        restoreRow?.isHidden = !hasBackups
+        undoBtn?.isHidden = !RestoreEngine.hasPreRestoreBackup()
     }
 
-    // MARK: - Tools list with categories
+    // MARK: - Actions
 
-    private var isBackupRunning = false
-
-    private func rebuildToolsList(config: Config?) {
-        categoryViews.forEach { $0.removeFromSuperview() }
-        categoryViews.removeAll()
-        toolsStack.arrangedSubviews.forEach { toolsStack.removeArrangedSubview($0); $0.removeFromSuperview() }
-
-        let discovered = ConfigDiscovery.discover()
-        let enabledPaths = Set(config?.source.paths ?? [])
-        let pathCount = enabledPaths.count
-        toolsHeaderLabel.stringValue = "Backup Sources (\(pathCount))"
-
-        // Group by category
-        var grouped: [(category: String, items: [(label: String, paths: [String], sensitive: Bool)])] = []
-        var seen: [String: Int] = [:]
-        for item in discovered {
-            if let idx = seen[item.category] {
-                grouped[idx].items.append((item.label, item.paths, item.sensitive))
-            } else {
-                seen[item.category] = grouped.count
-                grouped.append((item.category, [(item.label, item.paths, item.sensitive)]))
-            }
-        }
-
-        // Custom paths not in any discovered tool
-        let allDiscoveredPaths = Set(discovered.flatMap(\.paths))
-        let customPaths = (config?.source.paths ?? []).filter { !allDiscoveredPaths.contains($0) }
-        if !customPaths.isEmpty {
-            let customItems = customPaths.map { (label: ConfigDiscovery.contract(ConfigDiscovery.expand($0)),
-                                                  paths: [$0], sensitive: false) }
-            grouped.append(("Custom Folders", customItems))
-        }
-
-        for group in grouped {
-            let catView = ToolsCategoryView(category: group.category)
-            catView.toggleDelegate = self
-            catView.isReadOnly = isBackupRunning
-            catView.configure(items: group.items, enabledPaths: enabledPaths)
-            catView.translatesAutoresizingMaskIntoConstraints = false
-            toolsStack.addArrangedSubview(catView)
-            categoryViews.append(catView)
-        }
-    }
-
-    // MARK: - RestoreWindowDelegate
-
-    func restoreWindowDidConfirm(snapshotURL: URL, selectedItems: [String], brewInstall: Bool) {
-        restoreWindowController = nil
-        popoverDelegate?.popoverDidRequestRestore(snapshotURL, items: selectedItems, brewInstall: brewInstall)
-    }
-
-    // MARK: - ToolToggleDelegate
-
-    func toolPathToggled(_ path: String, enabled: Bool) {
-        popoverDelegate?.popoverDidTogglePath(path, enabled: enabled)
-        // Refresh immediately to update counts
-        DispatchQueue.main.async { [weak self] in self?.refresh() }
-    }
-
-    // MARK: - Restore
-
-    private var foundBackups: [(volume: String, backupDir: URL, snapshots: [String])] = []
-
-    private func rebuildRestoreList(backups: [(volume: String, backupDir: URL, snapshots: [String])]) {
-        restoreStack.arrangedSubviews.forEach { restoreStack.removeArrangedSubview($0); $0.removeFromSuperview() }
-        foundBackups = backups
-
-        for (i, backup) in backups.enumerated() {
-            guard let latest = backup.snapshots.first else { continue }
-            let snapshotURL = backup.backupDir.appendingPathComponent(latest)
-            let items = RestoreEngine.scanSnapshot(at: snapshotURL)
-            let hasBrewfile = FileManager.default.fileExists(
-                atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path)
-            let conflictCount = items.filter(\.existsAtDest).count
-
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.alignment = .centerY
-            row.spacing = 6
-            row.translatesAutoresizingMaskIntoConstraints = false
-            row.widthAnchor.constraint(equalToConstant: 272).isActive = true
-
-            let info = NSTextField(labelWithString:
-                "\(backup.volume): \(latest)\n\(items.count) items\(hasBrewfile ? " + Brew" : "")\(conflictCount > 0 ? " (\(conflictCount) exist)" : "")")
-            info.font = .systemFont(ofSize: 10)
-            info.textColor = MLColor.secondary
-            info.maximumNumberOfLines = 2
-            row.addArrangedSubview(info)
-
-            let sp = NSView()
-            sp.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            row.addArrangedSubview(sp)
-
-            let btn = NSButton(title: "Restore", target: self, action: #selector(restoreTapped(_:)))
-            btn.bezelStyle = .rounded
-            btn.font = .systemFont(ofSize: 11, weight: .medium)
-            btn.tag = i
-            row.addArrangedSubview(btn)
-
-            restoreStack.addArrangedSubview(row)
-        }
-    }
-
-    private var restoreWindowController: RestoreWindowController?
-
-    @objc private func restoreTapped(_ sender: NSButton) {
-        guard sender.tag < foundBackups.count else { return }
-        let backup = foundBackups[sender.tag]
-        guard let latest = backup.snapshots.first else { return }
-        let snapshotURL = backup.backupDir.appendingPathComponent(latest)
-
-        // Open restore window with per-item selection
-        let wc = RestoreWindowController(snapshotURL: snapshotURL)
-        wc.restoreDelegate = self
+    @objc private func backupTapped() {
+        guard let config = popoverDelegate?.popoverGetConfig() else { return }
+        let wc = TreeWindowController(mode: .backup, enabledPaths: Set(config.source.paths))
+        wc.treeDelegate = self
         wc.showWindow(nil)
         wc.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        restoreWindowController = wc  // retain
+        treeWindow = wc
+    }
+
+    @objc private func restoreTapped() {
+        let backups = RestoreEngine.findBackupSnapshots()
+        guard let first = backups.first, let latest = first.snapshots.first else { return }
+        let snapshotURL = first.backupDir.appendingPathComponent(latest)
+
+        let wc = TreeWindowController(mode: .restore(snapshotURL: snapshotURL))
+        wc.treeDelegate = self
+        wc.showWindow(nil)
+        wc.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        treeWindow = wc
+    }
+
+    @objc private func stopTapped() { popoverDelegate?.popoverDidRequestStop() }
+    @objc private func openFolderTapped() { popoverDelegate?.popoverDidRequestOpenFolder() }
+    @objc private func ejectTapped() { popoverDelegate?.popoverDidRequestEject() }
+    @objc private func quitTapped() { popoverDelegate?.popoverDidRequestQuit() }
+    @objc private func undoTapped() { popoverDelegate?.popoverDidRequestUndoRestore() }
+
+    // MARK: - TreeWindowDelegate
+
+    func treeWindowDidConfirmBackup(selectedPaths: [String]) {
+        treeWindow = nil
+        popoverDelegate?.popoverDidStartBackup(selectedPaths: selectedPaths)
+    }
+
+    func treeWindowDidConfirmRestore(snapshotURL: URL, selectedItems: [String], brewInstall: Bool) {
+        treeWindow = nil
+        popoverDelegate?.popoverDidStartRestore(snapshotURL: snapshotURL, items: selectedItems, brewInstall: brewInstall)
     }
 
     // MARK: - Disk selection
 
+    @objc private func diskSelected(_ sender: NSButton) {
+        let vols = discoverVolumes()
+        guard sender.tag < vols.count else { return }
+        popoverDelegate?.popoverDidSelectDisk(vols[sender.tag])
+    }
+
     private func rebuildDiskList() {
         diskStack.arrangedSubviews.forEach { diskStack.removeArrangedSubview($0); $0.removeFromSuperview() }
-        let volumes = discoverVolumes()
-        if volumes.isEmpty {
-            let lbl = NSTextField(labelWithString: "No external disk connected")
-            lbl.font = .systemFont(ofSize: 11)
-            lbl.textColor = MLColor.error
-            diskStack.addArrangedSubview(lbl)
+        let vols = discoverVolumes()
+        if vols.isEmpty {
+            let l = NSTextField(labelWithString: "No external disk connected")
+            l.font = .systemFont(ofSize: 11); l.textColor = .systemRed
+            diskStack.addArrangedSubview(l)
             return
         }
-        for (i, vol) in volumes.enumerated() {
+        for (i, vol) in vols.enumerated() {
             let (free, total) = DiskDiagnostics.diskSpace(at: vol.path)
             let btn = NSButton(title: "\(vol.lastPathComponent)  --  \(free / 1_073_741_824) / \(total / 1_073_741_824) GB",
                                target: self, action: #selector(diskSelected(_:)))
-            btn.bezelStyle = .rounded
-            btn.font = .systemFont(ofSize: 12)
-            btn.tag = i
+            btn.bezelStyle = .rounded; btn.font = .systemFont(ofSize: 12); btn.tag = i
             btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.widthAnchor.constraint(equalToConstant: 272).isActive = true
+            btn.widthAnchor.constraint(equalToConstant: 260).isActive = true
             diskStack.addArrangedSubview(btn)
         }
     }
@@ -434,91 +274,28 @@ class PopoverViewController: NSViewController, ToolToggleDelegate, RestoreWindow
         }
     }
 
-    // MARK: - Actions
-
-    @objc private func diskSelected(_ sender: NSButton) {
-        let vols = discoverVolumes()
-        guard sender.tag < vols.count else { return }
-        popoverDelegate?.popoverDidSelectDisk(vols[sender.tag])
-    }
-
-    @objc private func undoRestoreTapped() {
-        guard let latest = RestoreEngine.latestPreRestoreBackup() else { return }
-        let items = RestoreEngine.scanPreRestoreBackup(at: latest)
-
-        let alert = NSAlert()
-        alert.messageText = "Undo last restore?"
-        var details = "This will restore \(items.count) original files from before the last restore:\n"
-        for item in items.prefix(10) {
-            details += "\n  ~/\(item)"
-        }
-        if items.count > 10 { details += "\n  ... and \(items.count - 10) more" }
-        details += "\n\nThe restored versions will be overwritten with your originals."
-        alert.informativeText = details
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Undo Restore")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        popoverDelegate?.popoverDidRequestUndoRestore()
-    }
-
-    @objc private func selectAllTapped() {
-        let discovered = ConfigDiscovery.discover()
-        for item in discovered {
-            for path in item.paths {
-                popoverDelegate?.popoverDidTogglePath(path, enabled: true)
-            }
-        }
-        refresh()
-    }
-
-    @objc private func backupTapped() {
-        guard let d = popoverDelegate else { return }
-        d.popoverGetState() == .running ? d.popoverDidRequestStop() : d.popoverDidRequestBackup()
-    }
-
-    @objc private func addFolderTapped() { popoverDelegate?.popoverDidRequestAddFolder() }
-    @objc private func openFolderTapped() { popoverDelegate?.popoverDidRequestOpenFolder() }
-    @objc private func ejectTapped() { popoverDelegate?.popoverDidRequestEject() }
-    @objc private func quitTapped() { popoverDelegate?.popoverDidRequestQuit() }
-
     // MARK: - Layout
 
-    private func addToOuter(_ v: NSView) {
+    private func add(_ v: NSView) {
         v.translatesAutoresizingMaskIntoConstraints = false
         outerStack.addArrangedSubview(v)
     }
 
-    private func addSep() {
-        let sep = NSBox(); sep.boxType = .separator
-        sep.translatesAutoresizingMaskIntoConstraints = false
-        outerStack.addArrangedSubview(sep)
-        sep.widthAnchor.constraint(equalToConstant: 292).isActive = true
+    private func sep() {
+        let s = NSBox(); s.boxType = .separator
+        s.translatesAutoresizingMaskIntoConstraints = false
+        outerStack.addArrangedSubview(s)
+        s.widthAnchor.constraint(equalToConstant: 272).isActive = true
     }
 
-    private func addAction(_ title: String, icon: String, action: Selector, key: String = "") {
+    private func makeActionBtn(_ title: String, icon: String, action: Selector) -> NSButton {
         let btn = NSButton(title: title, target: self, action: action)
         btn.bezelStyle = .inline; btn.isBordered = false
         btn.font = .systemFont(ofSize: 13); btn.alignment = .left
-        btn.keyEquivalent = key
-        if !key.isEmpty { btn.keyEquivalentModifierMask = .command }
         if let img = NSImage(systemSymbolName: icon, accessibilityDescription: title) {
             btn.image = img; btn.imagePosition = .imageLeading
         }
-        addToOuter(btn)
-    }
-
-    private func makeRow() -> NSStackView {
-        let r = NSStackView(); r.orientation = .horizontal
-        r.alignment = .centerY; r.spacing = 8
-        r.translatesAutoresizingMaskIntoConstraints = false
-        r.widthAnchor.constraint(equalToConstant: 292).isActive = true
-        return r
-    }
-
-    private func hSpacer() -> NSView {
-        let s = NSView(); s.setContentHuggingPriority(.defaultLow, for: .horizontal); return s
+        return btn
     }
 
     private func pin(_ child: NSView, to parent: NSView) {

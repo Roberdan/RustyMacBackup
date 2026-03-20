@@ -83,8 +83,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
 
     // MARK: - PopoverDelegate
 
-    func popoverDidRequestBackup() {
-        guard let config = config else { return }
+    func popoverDidStartBackup(selectedPaths: [String]) {
+        guard var config = config else { return }
+        // Save selected paths to config
+        config.source.paths = selectedPaths
+        try? config.save(to: Config.defaultPath)
+        self.config = config
         popover.performClose(nil)
         iconManager.setState(.running)
         Log.info("Backup started: \(config.source.paths.count) paths -> \(config.destination.path)")
@@ -202,7 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         self.config = config
     }
 
-    func popoverDidRequestRestore(_ snapshotURL: URL, items: [String], brewInstall: Bool) {
+    func popoverDidStartRestore(snapshotURL: URL, items: [String], brewInstall: Bool) {
         popover.performClose(nil)
         iconManager.setState(.running)
 
