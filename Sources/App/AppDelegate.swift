@@ -186,12 +186,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         iconManager.setState(.running)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items) { item, done, total in
-                DispatchQueue.main.async {
-                    self?.sendNotification(title: "Restoring...",
-                                          body: "\(done)/\(total): \(item)")
-                }
-            }
+            let result = RestoreEngine.restore(snapshotURL: snapshotURL, items: items)
 
             var brewOK = true
             if brewInstall {
@@ -201,9 +196,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
             DispatchQueue.main.async {
                 self?.iconManager.setState(.idle)
                 let brewMsg = brewInstall ? (brewOK ? "\nHomebrew packages restored." : "\nHomebrew restore had errors.") : ""
+                let backupMsg = result.backedUpTo.isEmpty ? "" : "\nPre-restore backup: ~/.rustybackup-pre-restore/"
                 self?.sendNotification(
                     title: "Restore complete",
-                    body: "\(result.restored) restored, \(result.skipped) skipped, \(result.failed) failed\(brewMsg)")
+                    body: "\(result.restored) restored, \(result.overwritten) overwritten, \(result.failed) failed\(brewMsg)\(backupMsg)")
 
                 // After restore, create config pointing to this backup disk
                 let backupDir = snapshotURL.deletingLastPathComponent()

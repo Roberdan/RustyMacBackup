@@ -231,14 +231,14 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
             }
         }
 
-        // Disk selection + restore (setup mode)
+        // Disk selection (setup mode only)
         let showDisks = state == .needsSetup
         diskHeader.isHidden = !showDisks
         diskStack.isHidden = !showDisks
         if showDisks { rebuildDiskList() }
 
-        // Restore section
-        let backups = showDisks ? RestoreEngine.findBackupSnapshots() : []
+        // Restore section -- always visible when backups exist on any disk
+        let backups = RestoreEngine.findBackupSnapshots()
         let showRestore = !backups.isEmpty
         restoreHeader.isHidden = !showRestore
         restoreStack.isHidden = !showRestore
@@ -320,23 +320,36 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         for (i, backup) in backups.enumerated() {
             guard let latest = backup.snapshots.first else { continue }
             let snapshotURL = backup.backupDir.appendingPathComponent(latest)
+            let items = RestoreEngine.scanSnapshot(at: snapshotURL)
             let hasBrewfile = FileManager.default.fileExists(
                 atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path)
-            let items = RestoreEngine.scanSnapshot(at: snapshotURL)
+            let conflictCount = items.filter(\.existsAtDest).count
 
-            let infoLabel = NSTextField(labelWithString:
-                "\(backup.volume): \(latest)  --  \(items.count) items\(hasBrewfile ? " + Brewfile" : "")")
-            infoLabel.font = .systemFont(ofSize: 11)
-            infoLabel.textColor = MLColor.secondary
-            restoreStack.addArrangedSubview(infoLabel)
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 6
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.widthAnchor.constraint(equalToConstant: 272).isActive = true
 
-            let btn = NSButton(title: "Restore Everything", target: self, action: #selector(restoreTapped(_:)))
+            let info = NSTextField(labelWithString:
+                "\(backup.volume): \(latest)\n\(items.count) items\(hasBrewfile ? " + Brew" : "")\(conflictCount > 0 ? " (\(conflictCount) exist)" : "")")
+            info.font = .systemFont(ofSize: 10)
+            info.textColor = MLColor.secondary
+            info.maximumNumberOfLines = 2
+            row.addArrangedSubview(info)
+
+            let sp = NSView()
+            sp.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(sp)
+
+            let btn = NSButton(title: "Restore", target: self, action: #selector(restoreTapped(_:)))
             btn.bezelStyle = .rounded
-            btn.font = .systemFont(ofSize: 12, weight: .medium)
+            btn.font = .systemFont(ofSize: 11, weight: .medium)
             btn.tag = i
-            btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.widthAnchor.constraint(equalToConstant: 272).isActive = true
-            restoreStack.addArrangedSubview(btn)
+            row.addArrangedSubview(btn)
+
+            restoreStack.addArrangedSubview(row)
         }
     }
 
@@ -345,25 +358,46 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         let backup = foundBackups[sender.tag]
         guard let latest = backup.snapshots.first else { return }
         let snapshotURL = backup.backupDir.appendingPathComponent(latest)
-        let items = RestoreEngine.scanSnapshot(at: snapshotURL).map(\.relativePath)
+        let items = RestoreEngine.scanSnapshot(at: snapshotURL)
         let hasBrewfile = FileManager.default.fileExists(
             atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path)
 
-        // Confirmation alert
+        let conflicts = items.filter(\.existsAtDest)
+        let newItems = items.filter { !$0.existsAtDest }
+
+        // Build detailed confirmation
         let alert = NSAlert()
         alert.messageText = "Restore from \(latest)?"
-        alert.informativeText = """
-            This will restore \(items.count) items to your home directory.
-            Existing files will NOT be overwritten.
-            \(hasBrewfile ? "Homebrew packages will be reinstalled from Brewfile." : "")
-            """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Restore")
+        var details = "\(items.count) items to restore.\n"
+        if !newItems.isEmpty {
+            details += "\n\(newItems.count) new (will be created):"
+            for item in newItems.prefix(8) {
+                details += "\n  + ~/\(item.relativePath)"
+            }
+            if newItems.count > 8 { details += "\n  ... and \(newItems.count - 8) more" }
+        }
+        if !conflicts.isEmpty {
+            details += "\n\n\(conflicts.count) existing (will be OVERWRITTEN):"
+            for item in conflicts.prefix(8) {
+                details += "\n  ~ ~/\(item.relativePath)"
+            }
+            if conflicts.count > 8 { details += "\n  ... and \(conflicts.count - 8) more" }
+            details += "\n\nOverwritten files will be backed up to:"
+            details += "\n~/.rustybackup-pre-restore/ (recoverable)"
+        }
+        if hasBrewfile {
+            details += "\n\nHomebrew packages will be reinstalled from Brewfile."
+        }
+
+        alert.informativeText = details
+        alert.alertStyle = conflicts.isEmpty ? .informational : .warning
+        alert.addButton(withTitle: conflicts.isEmpty ? "Restore" : "Restore & Overwrite")
         alert.addButton(withTitle: "Cancel")
         let response = alert.runModal()
         guard response == .alertFirstButtonReturn else { return }
 
-        popoverDelegate?.popoverDidRequestRestore(snapshotURL, items: items, brewInstall: hasBrewfile)
+        popoverDelegate?.popoverDidRequestRestore(
+            snapshotURL, items: items.map(\.relativePath), brewInstall: hasBrewfile)
     }
 
     // MARK: - Disk selection

@@ -6,50 +6,62 @@ struct RestoreItem {
     let absoluteDest: String
     let isDirectory: Bool
     let size: UInt64
+    let existsAtDest: Bool
+}
+
+struct RestoreResult {
+    var restored: Int = 0
+    var overwritten: Int = 0
+    var failed: Int = 0
+    var backedUpTo: String = ""
 }
 
 enum RestoreEngine {
-    /// Scan a backup snapshot and return all restorable items grouped by category.
+
+    /// Pre-restore backup directory -- keeps copies of files before overwriting.
+    static func preRestoreBackupDir() -> URL {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let timestamp = formatter.string(from: Date())
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".rustybackup-pre-restore/\(timestamp)")
+    }
+
+    /// Scan a backup snapshot and return top-level restorable items.
     static func scanSnapshot(at snapshotURL: URL) -> [RestoreItem] {
         let fm = FileManager.default
-        guard let enumerator = fm.enumerator(
+        let home = fm.homeDirectoryForCurrentUser.path
+
+        guard let contents = try? fm.contentsOfDirectory(
             at: snapshotURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+            options: []
         ) else { return [] }
 
         var items: [RestoreItem] = []
-        let home = fm.homeDirectoryForCurrentUser.path
+        for url in contents {
+            let name = url.lastPathComponent
+            if name == "_environment" { continue }
 
-        while let url = enumerator.nextObject() as? URL {
-            let rel = url.path.replacingOccurrences(of: snapshotURL.path + "/", with: "")
-            if rel == "_environment" || rel.hasPrefix("_environment/") {
-                enumerator.skipDescendants()
-                continue
-            }
-            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey]) else {
-                continue
-            }
-            let isDir = values.isDirectory ?? false
-            let size = UInt64(values.fileSize ?? 0)
-            // Only top-level items (first path component)
-            if rel.contains("/") && !isDir { continue }
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            let isDir = values?.isDirectory ?? false
+            let size = UInt64(values?.fileSize ?? 0)
+            let dest = home + "/" + name
+            let exists = fm.fileExists(atPath: dest)
 
-            let dest = home + "/" + rel
             items.append(RestoreItem(
-                relativePath: rel,
+                relativePath: name,
                 absoluteSource: url.path,
                 absoluteDest: dest,
                 isDirectory: isDir,
-                size: size
+                size: size,
+                existsAtDest: exists
             ))
-
-            if isDir { enumerator.skipDescendants() }
         }
-        return items
+        return items.sorted { $0.relativePath < $1.relativePath }
     }
 
-    /// Find the latest backup snapshot on any connected volume.
+    /// Find backup snapshots on all connected volumes.
     static func findBackupSnapshots() -> [(volume: String, backupDir: URL, snapshots: [String])] {
         let fm = FileManager.default
         guard let volumes = fm.mountedVolumeURLs(
@@ -69,34 +81,54 @@ enum RestoreEngine {
         return results
     }
 
-    /// Restore selected items from a snapshot. Skips items that already exist.
+    /// Restore items from a snapshot.
+    /// - Backs up existing files to ~/.rustybackup-pre-restore/TIMESTAMP/ before overwriting
+    /// - Creates parent directories as needed
     static func restore(snapshotURL: URL, items: [String],
-                        progress: ((String, Int, Int) -> Void)? = nil) -> (restored: Int, skipped: Int, failed: Int) {
+                        progress: ((String, Int, Int) -> Void)? = nil) -> RestoreResult {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
-        var restored = 0, skipped = 0, failed = 0
+        let backupDir = preRestoreBackupDir()
+        var result = RestoreResult()
+        result.backedUpTo = backupDir.path
         let total = items.count
+        var didBackup = false
 
         for (i, rel) in items.enumerated() {
             let source = snapshotURL.appendingPathComponent(rel)
             let dest = URL(fileURLWithPath: home + "/" + rel)
             progress?(rel, i + 1, total)
 
-            if fm.fileExists(atPath: dest.path) {
-                skipped += 1
-                continue
-            }
-
             do {
+                // If destination exists, back it up first
+                if fm.fileExists(atPath: dest.path) {
+                    if !didBackup {
+                        try fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+                        didBackup = true
+                    }
+                    let backupDest = backupDir.appendingPathComponent(rel)
+                    try fm.createDirectory(at: backupDest.deletingLastPathComponent(),
+                                           withIntermediateDirectories: true)
+                    try fm.copyItem(at: dest, to: backupDest)
+                    try fm.removeItem(at: dest)
+                    result.overwritten += 1
+                }
+
                 try fm.createDirectory(at: dest.deletingLastPathComponent(),
                                        withIntermediateDirectories: true)
                 try fm.copyItem(at: source, to: dest)
-                restored += 1
+                result.restored += 1
             } catch {
-                failed += 1
+                result.failed += 1
             }
         }
-        return (restored, skipped, failed)
+
+        // Clean up empty backup dir if nothing was backed up
+        if !didBackup {
+            result.backedUpTo = ""
+        }
+
+        return result
     }
 
     /// Run brew bundle install from the Brewfile in the snapshot.
