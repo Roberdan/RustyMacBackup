@@ -37,6 +37,22 @@ fi
 
 echo "  ✅ Installato: $INSTALL_PATH"
 
+# Sync .app + .pkg to backup disk so the app is recoverable from the backup itself
+BACKUP_DEST_DIR=$(awk -F'"' '/^path *=/{print $2}' ~/.config/rusty-mac-backup/config.toml 2>/dev/null || true)
+if [ -n "$BACKUP_DEST_DIR" ] && [ -d "$BACKUP_DEST_DIR" ]; then
+    echo "  Aggiorno disco di backup: $BACKUP_DEST_DIR..."
+    rsync -a --delete "$BUILD_PATH/Contents/" "$BACKUP_DEST_DIR/$APP_NAME.app/Contents/"
+    echo "  ✅ .app aggiornata sul disco di backup"
+    # Copy latest .pkg if present
+    PKG=$(ls ${APP_NAME}-*.pkg build/${APP_NAME}-*.pkg 2>/dev/null | sort -V | tail -1 || true)
+    if [ -n "$PKG" ]; then
+        cp "$PKG" "$BACKUP_DEST_DIR/"
+        echo "  ✅ $(basename "$PKG") copiato sul disco di backup"
+    fi
+else
+    echo "  ⚠️  Disco di backup non montato, skip sync"
+fi
+
 # Relaunch
 echo "  Avvio $APP_NAME..."
 open "$INSTALL_PATH"
