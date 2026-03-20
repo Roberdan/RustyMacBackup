@@ -13,9 +13,10 @@ struct FileEntry {
 /// Bird-safe: yields in batches with micro-pauses to avoid triggering
 /// iCloud eviction cascades (CCC uses similar technique).
 enum FileScanner {
-    /// Micro-pause every N files to let bird/iCloud settle
-    static let BIRD_SAFE_BATCH_SIZE = 200
-    static let BIRD_SAFE_PAUSE_US: UInt32 = 50_000 // 50ms
+    /// Bird-safe: pause every N files to let iCloud daemon settle.
+    /// CCC uses max 100 files / 2 GB. We use 50 files / 100ms pause.
+    static let BIRD_SAFE_BATCH_SIZE = 50
+    static let BIRD_SAFE_PAUSE_US: UInt32 = 100_000 // 100ms
     static func walk(
         sources: [URL],
         basePaths: [String],

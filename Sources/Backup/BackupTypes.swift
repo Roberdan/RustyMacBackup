@@ -22,6 +22,7 @@ enum BackupError: LocalizedError {
     case lockExists
     case cancelled
     case forbiddenPath(String)
+    case sourceFilesVanishing
 
     var errorDescription: String? {
         switch self {
@@ -33,6 +34,7 @@ enum BackupError: LocalizedError {
         case .lockExists:               return "Another backup is already running (lock file exists)"
         case .cancelled:                return "Backup was cancelled"
         case .forbiddenPath(let p):     return "Forbidden path (system/TCC protected): \(p)"
+        case .sourceFilesVanishing:     return "EMERGENCY STOP: source files are disappearing (possible iCloud eviction). Backup halted to protect your data."
         }
     }
 }

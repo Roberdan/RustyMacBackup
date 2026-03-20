@@ -89,57 +89,59 @@ enum BackupEngine {
         var errorList: [(path: String, error: Error)] = []
         var processedCount: UInt64 = 0
 
-        // Limit concurrency to avoid overwhelming bird/iCloud
-        try await withThrowingTaskGroup(of: FileResult.self) { group in
-            var activeTasks = 0
-            let maxConcurrent = 4
+        // Sequential processing -- one file at a time to avoid triggering bird/iCloud
+        var vanishedCount = 0
+        let VANISHED_THRESHOLD = 3
 
-            for await file in stream {
-                if shouldCancel { break }
-                processedCount += 1
+        for await file in stream {
+            if shouldCancel { break }
+            processedCount += 1
 
-                if processedCount % UInt64(DISK_CHECK_INTERVAL) == 0 {
-                    guard FileManager.default.fileExists(atPath: inProgressURL.path) else {
-                        throw BackupError.diskDisconnected
-                    }
-                }
-
-                if activeTasks >= maxConcurrent {
-                    if let result = try await group.next() {
-                        processResult(result, stats: &stats, errors: &errorList)
-                        activeTasks -= 1
-                    }
-                }
-
-                let destFile = inProgressURL.appendingPathComponent(file.relativePath).path
-                let prevFile = latestBackup.map { $0.appendingPathComponent(file.relativePath).path }
-                let capturedFile = file
-                group.addTask {
-                    await processFile(entry: capturedFile, destFile: destFile, prevFile: prevFile)
-                }
-                activeTasks += 1
-
-                if processedCount % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    let discovered = UInt64(discoveredCount.pointee)
-                    let done = processedCount
-                    status.filesDone = done
-                    status.filesTotal = walkerDone.pointee ? discovered : discovered + 5000
-                    status.bytesCopied = stats.bytesCopied
-                    status.bytesPerSec = elapsed > 0 ? UInt64(Double(stats.bytesCopied) / elapsed) : 0
-                    if status.bytesPerSec > 0 && done > 0 {
-                        let remaining = status.filesTotal > done ? status.filesTotal - done : 0
-                        let avgBytesPerFile = stats.bytesCopied / done
-                        status.etaSecs = UInt64(remaining * avgBytesPerFile / status.bytesPerSec)
-                    }
-                    status.errors = UInt64(errorList.count)
-                    status.currentFile = file.relativePath
-                    try? statusWriter.write(status: status)
+            // Disk check
+            if processedCount % UInt64(DISK_CHECK_INTERVAL) == 0 {
+                guard FileManager.default.fileExists(atPath: inProgressURL.path) else {
+                    throw BackupError.diskDisconnected
                 }
             }
 
-            for try await result in group {
-                processResult(result, stats: &stats, errors: &errorList)
+            // Emergency stop: if source files are vanishing, bird is evicting
+            if vanishedCount >= VANISHED_THRESHOLD {
+                Log.error("EMERGENCY STOP: \(vanishedCount) source files vanished during backup -- bird eviction suspected")
+                status.state = "error"
+                status.currentFile = "STOPPED: source files vanishing (iCloud eviction)"
+                try? statusWriter.write(status: status)
+                throw BackupError.sourceFilesVanishing
+            }
+
+            let destFile = inProgressURL.appendingPathComponent(file.relativePath).path
+            let prevFile = latestBackup.map { $0.appendingPathComponent(file.relativePath).path }
+
+            let result = await processFile(entry: file, destFile: destFile, prevFile: prevFile)
+            processResult(result, stats: &stats, errors: &errorList)
+
+            // Post-copy verification: check source still exists
+            if !FileManager.default.fileExists(atPath: file.absolutePath) {
+                vanishedCount += 1
+                Log.warn("Source file vanished after copy: \(file.relativePath) (\(vanishedCount)/\(VANISHED_THRESHOLD))")
+            }
+
+            // Status update
+            if processedCount % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
+                let elapsed = Date().timeIntervalSince(startTime)
+                let discovered = UInt64(discoveredCount.pointee)
+                let done = processedCount
+                status.filesDone = done
+                status.filesTotal = walkerDone.pointee ? discovered : discovered + 5000
+                status.bytesCopied = stats.bytesCopied
+                status.bytesPerSec = elapsed > 0 ? UInt64(Double(stats.bytesCopied) / elapsed) : 0
+                if status.bytesPerSec > 0 && done > 0 {
+                    let remaining = status.filesTotal > done ? status.filesTotal - done : 0
+                    let avgBytesPerFile = stats.bytesCopied / done
+                    status.etaSecs = UInt64(remaining * avgBytesPerFile / status.bytesPerSec)
+                }
+                status.errors = UInt64(errorList.count)
+                status.currentFile = file.relativePath
+                try? statusWriter.write(status: status)
             }
         }
 
