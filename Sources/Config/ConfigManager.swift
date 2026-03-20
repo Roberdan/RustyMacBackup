@@ -21,18 +21,15 @@ struct Config {
 
         var out: [String] = []
         out.append("[source]")
-        out.append("path = \"\(Self.escape(source.path))\"")
-        out.append("extra_paths = [")
-        for path in source.extraPaths {
+        out.append("paths = [")
+        for path in source.paths {
             out.append("    \"\(Self.escape(path))\",")
         }
         out.append("]")
         out.append("")
-
         out.append("[destination]")
         out.append("path = \"\(Self.escape(destination.path))\"")
         out.append("")
-
         out.append("[exclude]")
         out.append("patterns = [")
         for pattern in exclude.patterns {
@@ -40,7 +37,6 @@ struct Config {
         }
         out.append("]")
         out.append("")
-
         out.append("[retention]")
         out.append("hourly = \(retention.hourly)")
         out.append("daily = \(retention.daily)")
@@ -48,12 +44,16 @@ struct Config {
         out.append("monthly = \(retention.monthly)")
         out.append("")
 
-        try out.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        let data = out.joined(separator: "\n").data(using: .utf8)!
+        try data.write(to: url, options: [.atomic])
+        // Set config permissions to 0600 (owner-only)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static func parseTOML(_ content: String) throws -> Config {
         var config = Config(
-            source: SourceConfig(path: "", extraPaths: []),
+            source: SourceConfig(paths: []),
             destination: DestinationConfig(path: ""),
             exclude: ExcludeConfig(patterns: []),
             retention: RetentionConfig()
@@ -108,12 +108,19 @@ struct Config {
             }
         }
 
+        // Migrate old format: if paths is empty but we got a legacy "path" + "extra_paths"
+        if config.source.paths.isEmpty, let legacy = config.source.legacyPath {
+            config.source.paths = [legacy] + config.source.legacyExtraPaths
+            config.source.legacyPath = nil
+            config.source.legacyExtraPaths = []
+        }
+
         return config
     }
 
     private static func assign(section: String, key: String, stringValue: String, to config: inout Config) {
         switch "\(section).\(key)" {
-        case "source.path": config.source.path = stringValue
+        case "source.path": config.source.legacyPath = stringValue
         case "destination.path": config.destination.path = stringValue
         default: break
         }
@@ -131,7 +138,8 @@ struct Config {
 
     private static func assign(section: String, key: String, values: [String], to config: inout Config) {
         switch "\(section).\(key)" {
-        case "source.extra_paths": config.source.extraPaths = values
+        case "source.paths": config.source.paths = values
+        case "source.extra_paths": config.source.legacyExtraPaths = values
         case "exclude.patterns": config.exclude.patterns = values
         default: break
         }
@@ -151,18 +159,9 @@ struct Config {
         var inQuotes = false
         var escaped = false
         var token = ""
-
         for char in input {
-            if escaped {
-                token.append(char)
-                escaped = false
-                continue
-            }
-            if char == "\\" {
-                escaped = true
-                token.append(char)
-                continue
-            }
+            if escaped { token.append(char); escaped = false; continue }
+            if char == "\\" { escaped = true; token.append(char); continue }
             if char == "\"" {
                 inQuotes.toggle()
                 token.append(char)
@@ -172,9 +171,7 @@ struct Config {
                 }
                 continue
             }
-            if inQuotes {
-                token.append(char)
-            }
+            if inQuotes { token.append(char) }
         }
         return items
     }
@@ -183,26 +180,11 @@ struct Config {
         var out = ""
         var inQuotes = false
         var escaped = false
-
         for char in line {
-            if escaped {
-                out.append(char)
-                escaped = false
-                continue
-            }
-            if char == "\\" {
-                escaped = true
-                out.append(char)
-                continue
-            }
-            if char == "\"" {
-                inQuotes.toggle()
-                out.append(char)
-                continue
-            }
-            if char == "#", !inQuotes {
-                break
-            }
+            if escaped { out.append(char); escaped = false; continue }
+            if char == "\\" { escaped = true; out.append(char); continue }
+            if char == "\"" { inQuotes.toggle(); out.append(char); continue }
+            if char == "#", !inQuotes { break }
             out.append(char)
         }
         return out
@@ -214,11 +196,13 @@ struct Config {
 }
 
 struct SourceConfig {
-    var path: String
-    var extraPaths: [String]
+    var paths: [String]
+    // Legacy migration support
+    var legacyPath: String?
+    var legacyExtraPaths: [String] = []
 
-    func allPaths() -> [String] {
-        return [path] + extraPaths
+    func allExpandedPaths() -> [String] {
+        paths.map { ConfigDiscovery.expand($0) }
     }
 }
 
@@ -237,47 +221,42 @@ struct RetentionConfig {
     var monthly: UInt32 = 0
 }
 
-func generateDefaultConfig(homePath: String, backupPath: String) -> String {
-    let extraPaths = ["/Applications", "/opt/homebrew", "/usr/local", "/etc", "/Library"]
-    let patterns = [
-        // macOS system junk
-        ".Spotlight-*", ".fseventsd", ".Trash", ".Trashes", ".DS_Store",
-        ".TemporaryItems", ".VolumeIcon.icns",
-        // Library caches & logs (regenerable)
-        "Library/Caches", "Library/Logs", "Library/Application Support/Caches",
-        "Library/Saved Application State", "Library/Containers/*/Data/Library/Caches",
-        "Library/Updates", "Library/Developer",
-        // iCloud-managed containers (touching these crashes tccd → bird mass-eviction)
-        "Library/Containers", "Library/Group Containers",
-        "Library/Daemon Containers",
-        // System-managed ML/analytics (regenerable, daemon-managed)
-        "Library/Metadata", "Library/Biome",
-        "Library/DuetExpertCenter", "Library/IntelligencePlatform",
-        "Library/Trial", "Library/PersonalizationPortrait",
-        "Library/StatusKit", "Library/Suggestions",
-        // Cloud-synced (already backed up by Apple/cloud providers)
-        "Library/CloudStorage", "Library/Mobile Documents",
-        "Library/Application Support/CloudDocs",
-        "OneDrive*", "Dropbox", "Google Drive", "iCloud Drive*",
-        // Photos & Music (synced via iCloud/Apple)
-        "Pictures/Photos Library.photoslibrary",
-        "Pictures/Photo Booth Library",
-        "Music/Music/Media.localized",
-        // iOS backups (huge, regenerable)
-        "Library/Application Support/MobileSync",
+func generateDefaultConfig(backupPath: String) -> Config {
+    let discovered = ConfigDiscovery.discover()
+    var paths: [String] = []
+    for item in discovered where !item.sensitive {
+        paths.append(contentsOf: item.paths)
+    }
+    // Add ~/GitHub if it exists
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    if FileManager.default.fileExists(atPath: home + "/GitHub") {
+        paths.append("~/GitHub")
+    }
+    if FileManager.default.fileExists(atPath: home + "/Developer") {
+        paths.append("~/Developer")
+    }
+
+    let defaultExcludes = [
+        // macOS system junk (CCC-recommended exclusions)
+        ".DS_Store", ".Trash", ".Trashes", ".Spotlight-V100",
+        ".fseventsd", ".TemporaryItems", ".VolumeIcon.icns",
+        "DocumentRevisions-V100",
         // Dev build artifacts (regenerable)
         "node_modules", ".git/objects", "target/debug", "target/release",
         ".build", "*.tmp", "*.swp", ".cache", "__pycache__", ".venv", ".tox",
-        // Large AI models
-        ".ollama/models", ".lmstudio",
-        // Disk images
+        // App caches inside backed-up dirs
+        "Caches", "Cache", "GPUCache", "ShaderCache", "Code Cache",
+        "CachedData", "CachedExtensions", "CachedExtensionVSIXs",
+        // Large binaries
         "*.iso", "*.dmg",
+        // AI models (huge, re-downloadable)
+        ".ollama/models", ".lmstudio",
     ]
 
-    var lines = ["[source]", "path = \"\(homePath)\"", "extra_paths = ["]
-    extraPaths.forEach { lines.append("    \"\($0)\",") }
-    lines.append(contentsOf: ["]", "", "[destination]", "path = \"\(backupPath)\"", "", "[exclude]", "patterns = ["])
-    patterns.forEach { lines.append("    \"\($0)\",") }
-    lines.append(contentsOf: ["]", "", "[retention]", "hourly = 24", "daily = 30", "weekly = 52", "monthly = 0", ""])
-    return lines.joined(separator: "\n")
+    return Config(
+        source: SourceConfig(paths: paths),
+        destination: DestinationConfig(path: backupPath),
+        exclude: ExcludeConfig(patterns: defaultExcludes),
+        retention: RetentionConfig()
+    )
 }

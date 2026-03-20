@@ -67,12 +67,7 @@ final class StatusWriter {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(payload)
 
-        let tempURL = fileURL.appendingPathExtension("tmp")
-        try data.write(to: tempURL, options: .atomic)
-
-        if fileManager.fileExists(atPath: fileURL.path) {
-            try fileManager.removeItem(at: fileURL)
-        }
-        try fileManager.moveItem(at: tempURL, to: fileURL)
+        // Atomic write: write to temp then replace in one operation
+        try data.write(to: fileURL, options: [.atomic])
     }
 }

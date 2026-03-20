@@ -1,48 +1,66 @@
-# 🏎️ RustyMacBackup
+# RustyMacBackup
 
-Fast, native macOS backup tool with a Ferrari-inspired menu bar app. A Time Machine alternative that bypasses MDM restrictions.
+Safe, fast backup of your dev configurations and chosen folders. A Time Machine alternative that works with MDM-restricted Macs.
 
-**Single native `.app` bundle** — pure Swift, zero dependencies, one Full Disk Access entry.
+**Whitelist-only model** -- backs up ONLY the folders you choose. No system paths, no TCC conflicts, no Full Disk Access needed.
 
 ## Features
 
-- **Native macOS app** — single .app serves as menu bar app AND CLI tool
-- **Incremental backups** with hard links (unchanged files = zero space)
-- **APFS clone support** — instant file copies via `copyfile()` with `COPYFILE_CLONE`
-- **Parallel I/O** — 8 concurrent workers via Swift `TaskGroup`
-- **Smart excludes** — glob patterns skip caches, cloud storage, build artifacts
-- **Battery-aware** — throttles I/O on battery, full speed on AC
-- **Maranello Luce UI** — Ferrari-inspired design with animated speedometer gauge
-- **Disk safety** — stale mountpoint detection, disconnect-proof, lock files
-- **Scheduled backups** — via macOS LaunchAgent (every N minutes or daily)
-- **Full Disk Access diagnostics** — probes TCC paths, shows actionable fixes
+- **Safe by design** -- whitelist-only, forbidden path enforcement, no system directory access
+- **Auto-discovery** -- detects installed dev tools (shells, editors, terminals, Git, SSH, etc.)
+- **Incremental backups** with hard links (unchanged files = zero extra space)
+- **APFS clone support** -- instant file copies via `copyfile()` with `COPYFILE_CLONE`
+- **Parallel I/O** -- 8 concurrent workers via Swift `TaskGroup`
+- **Modern popover UI** -- NSPopover with vibrancy, folder list, progress bar
+- **Battery-aware** -- throttles I/O on battery, full speed on AC
+- **Symlink-safe** -- skips symbolic links to prevent loops and indirect TCC access
+- **Scheduled backups** -- via macOS LaunchAgent
+- **CLI + menu bar** -- single .app bundle, zero dependencies
+
+## What It Backs Up
+
+Auto-discovered dev tool configs (run `discover` to see yours):
+
+| Category | Tools |
+|----------|-------|
+| Shell | zsh, bash, fish |
+| Git | .gitconfig, .gitignore_global |
+| SSH | config, known_hosts (NOT private keys) |
+| Terminal | Ghostty, Warp, iTerm2, Alacritty, kitty |
+| Multiplexer | tmux, zellij |
+| Editor | Neovim, Vim, Emacs, VS Code, Cursor, Sublime Text |
+| Dev Tools | starship, direnv, mise, Cargo config, Brewfile |
+| AI Tools | Claude CLI settings, Ollama config |
+| Custom | Any folder you add (~/GitHub, ~/Documents, etc.) |
+
+## What It Will NEVER Touch
+
+System/TCC-protected paths are hardcoded as forbidden:
+
+`Library/Mail`, `Library/Messages`, `Library/Safari`, `Library/Containers`,
+`Library/CloudStorage`, `Library/Mobile Documents`, `Library/Caches`,
+`/Library`, `/System`, `/etc`, `/Applications`, `/usr`, `/opt`, `/private`
 
 ## Installation
 
-### From .pkg installer
-```bash
-# Download latest .pkg from Releases
-sudo installer -pkg RustyMacBackup-1.0.0.pkg -target /
-```
-
-### Build from source
 ```bash
 git clone https://github.com/Roberdan/RustyMacBackup.git
 cd RustyMacBackup
 ./build.sh
-# Copy to Applications
 cp -r build/RustyMacBackup.app /Applications/
 ```
 
-**Requirements**: macOS 14+ (Sonoma), Xcode Command Line Tools (`xcode-select --install`)
+**Requirements**: macOS 14+ (Sonoma), Xcode Command Line Tools
 
 ## Quick Start
 
 ```bash
-# Set up an alias for convenience
 alias rustyback='/Applications/RustyMacBackup.app/Contents/MacOS/RustyMacBackup'
 
-# First-time setup
+# See what dev configs are detected on your Mac
+rustyback discover
+
+# First-time setup (picks disk, auto-discovers configs)
 rustyback init
 
 # Run a backup
@@ -50,47 +68,23 @@ rustyback backup
 
 # Check status
 rustyback status
-
-# List snapshots
-rustyback list
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
+| `discover` | Show detected dev tool configs |
+| `init` | Setup wizard (discovers configs, picks disk) |
 | `backup` | Run backup now |
 | `stop` | Stop running backup |
+| `status` | Show backup status + folder list |
 | `list` | List backup snapshots |
-| `status` | Show backup status |
 | `prune [--dry-run]` | Clean up old backups |
 | `restore <snapshot> [path] --to <dest>` | Restore from backup |
-| `init` | First-time setup wizard |
-| `config show\|source\|dest\|exclude\|include\|excludes\|retention\|edit` | Manage config |
-| `schedule on\|off\|status\|interval <min>\|daily <hour>` | Manage schedule |
+| `config show\|add\|remove\|edit` | Manage backed-up paths |
+| `schedule on\|off\|interval <min>\|daily <hour>` | Manage schedule |
 | `errors [--all]` | Show backup errors |
-| `version` | Show version |
-
-Global option: `-c <path>` to use a custom config file.
-
-## Menu Bar App
-
-Launch RustyMacBackup.app without arguments to start the menu bar app:
-
-- **Status icon** with colored dot (green=healthy, yellow=stale, red=error, blue=running)
-- **Live progress** with gradient progress bar and speedometer gauge
-- **Schedule management** submenu
-- **Preferences** submenu (exclude patterns, retention policy)
-- **Disk management** — eject, encryption check, space monitoring
-- **Notifications** — backup complete/failed, disk events
-
-## How It Works
-
-1. **Scan** source directories (skip excluded paths, don't descend into them)
-2. **Compare** each file with the latest backup (size + modification time)
-3. **Hard-link** unchanged files (zero disk space, instant)
-4. **Copy** changed files via `copyfile()` with APFS clone support
-5. **Atomic rename** from `in-progress-*` to final timestamp on success
 
 ## Configuration
 
@@ -98,33 +92,40 @@ Config file: `~/.config/rusty-mac-backup/config.toml`
 
 ```toml
 [source]
-path = "/Users/username"
-extra_paths = ["/Applications", "/opt/homebrew", "/usr/local", "/etc", "/Library"]
+paths = [
+    "~/.zshrc",
+    "~/.gitconfig",
+    "~/.ssh/config",
+    "~/.config/ghostty",
+    "~/.config/nvim",
+    "~/GitHub",
+]
 
 [destination]
 path = "/Volumes/BackupDisk/RustyMacBackup"
 
 [exclude]
 patterns = [
-    ".Spotlight-*", ".fseventsd", ".DS_Store", "Library/Caches",
-    "node_modules", ".git/objects", "target/debug", "*.tmp",
+    "node_modules", ".git/objects", ".DS_Store",
+    "Caches", "Cache", "*.tmp",
 ]
 
 [retention]
 hourly = 24
 daily = 30
 weekly = 52
-monthly = 0    # 0 = keep one per month forever
+monthly = 0
 ```
 
-## Retention Policy
+## Menu Bar App
 
-| Period | Default | Meaning |
-|--------|---------|---------|
-| Hourly | 24 | Keep 24 most recent hourly backups |
-| Daily | 30 | Keep 30 daily (one per day) |
-| Weekly | 52 | Keep 52 weekly (one per week) |
-| Monthly | 0 | Keep one per month forever |
+Launch without arguments for the popover UI:
+
+- Status icon with colored dot (green/yellow/red)
+- Folder list with count
+- Progress bar + speed + ETA during backup
+- Add folders via file picker (with forbidden path enforcement)
+- Eject disk, open backup folder, quit
 
 ## Testing
 
@@ -132,8 +133,8 @@ monthly = 0    # 0 = keep one per month forever
 ./run-tests.sh
 ```
 
-Runs 25 unit tests covering ExcludeFilter, Retention, Config parsing, BackupEngine, and HardLinker.
+25 unit tests covering ExcludeFilter, Retention, Config parsing, BackupEngine, HardLinker, and legacy config migration.
 
 ## License
 
-MIT © Roberdan 2026
+MIT

@@ -8,7 +8,13 @@ struct ScheduleStatus {
 
 enum ScheduleManager {
     static let label = "com.roberdan.rusty-mac-backup"
-    static let binaryPath = "/Applications/RustyMacBackup.app/Contents/MacOS/RustyMacBackup"
+    static var binaryPath: String {
+        // Use actual bundle path if available, fall back to /Applications
+        if let bundlePath = Bundle.main.executablePath {
+            return bundlePath
+        }
+        return "/Applications/RustyMacBackup.app/Contents/MacOS/RustyMacBackup"
+    }
 
     static var plistPath: URL {
         FileManager.default.homeDirectoryForCurrentUser

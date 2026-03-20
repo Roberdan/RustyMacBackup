@@ -33,7 +33,7 @@ struct TestRunner {
             ("Config.defaults", config.test_defaultRetention),
             ("Config.comments", config.test_commentsIgnored),
             ("Config.roundTrip", config.test_roundTrip),
-            ("Config.extraPaths", config.test_extraPathsParsed),
+            ("Config.legacyMigration", config.test_legacyConfigMigration),
             ("BackupEngine.naming", backup.test_snapshotNaming),
             ("BackupEngine.inProgress", backup.test_inProgressPrefix),
             ("BackupEngine.statusFormat", backup.test_statusFileFormat),

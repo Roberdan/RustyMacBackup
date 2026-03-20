@@ -21,6 +21,7 @@ enum BackupError: LocalizedError {
     case diskDisconnected
     case lockExists
     case cancelled
+    case forbiddenPath(String)
 
     var errorDescription: String? {
         switch self {
@@ -31,6 +32,7 @@ enum BackupError: LocalizedError {
         case .diskDisconnected:         return "Destination disk disconnected during backup"
         case .lockExists:               return "Another backup is already running (lock file exists)"
         case .cancelled:                return "Backup was cancelled"
+        case .forbiddenPath(let p):     return "Forbidden path (system/TCC protected): \(p)"
         }
     }
 }

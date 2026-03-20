@@ -2,57 +2,41 @@ import Foundation
 import Darwin
 
 enum CLIHandler {
-    static let version = "1.0.0"
+    static let version = "2.0.0"
 
     static func run(args: [String], config: Config? = nil) {
         _ = config
-
         var configPath: String?
         var commandArgs = args
         if let idx = commandArgs.firstIndex(of: "-c") ?? commandArgs.firstIndex(of: "--config") {
             guard idx + 1 < commandArgs.count else {
-                printError("Manca il percorso dopo -c/--config")
+                printError("Missing path after -c/--config")
                 exit(1)
             }
             configPath = commandArgs[idx + 1]
             commandArgs.removeSubrange(idx...idx + 1)
         }
 
-        guard let command = commandArgs.first else {
-            printUsage()
-            exit(1)
-        }
-
+        guard let command = commandArgs.first else { printUsage(); exit(1) }
         let subArgs = Array(commandArgs.dropFirst())
 
         do {
             switch command {
-            case "version", "--version", "-v":
-                print("RustyMacBackup v\(version)")
-            case "help", "--help", "-h":
-                printUsage()
-            case "init":
-                try runInitWizard(configPath: configPath)
-            case "backup":
-                try runBackup(configPath: configPath)
-            case "stop":
-                try runStop(configPath: configPath)
-            case "status":
-                try runStatus(configPath: configPath)
-            case "prune":
-                try runPrune(subArgs: subArgs, configPath: configPath)
-            case "list":
-                try runList(configPath: configPath)
-            case "restore":
-                try runRestore(subArgs: subArgs, configPath: configPath)
-            case "config":
-                try runConfig(subArgs: subArgs, configPath: configPath)
-            case "schedule":
-                try runSchedule(subArgs: subArgs)
-            case "errors":
-                runErrors(subArgs: subArgs)
+            case "version", "--version", "-v": print("RustyMacBackup v\(version)")
+            case "help", "--help", "-h": printUsage()
+            case "init": try runInit(configPath: configPath)
+            case "backup": try runBackup(configPath: configPath)
+            case "stop": try runStop(configPath: configPath)
+            case "status": try runStatus(configPath: configPath)
+            case "prune": try runPrune(subArgs: subArgs, configPath: configPath)
+            case "list": try runList(configPath: configPath)
+            case "restore": try runRestore(subArgs: subArgs, configPath: configPath)
+            case "config": try runConfig(subArgs: subArgs, configPath: configPath)
+            case "schedule": try runSchedule(subArgs: subArgs)
+            case "discover": runDiscover()
+            case "errors": runErrors(subArgs: subArgs)
             default:
-                printError("Comando sconosciuto: \(command)")
+                printError("Unknown command: \(command)")
                 printUsage()
                 exit(1)
             }
@@ -64,33 +48,29 @@ enum CLIHandler {
     }
 
     static func commandNeedsConfig(_ command: String) -> Bool {
-        switch command {
-        case "backup", "stop", "list", "status", "prune", "restore", "config", "schedule", "errors":
-            return true
-        default:
-            return false
-        }
+        ["backup", "stop", "list", "status", "prune", "restore", "config", "schedule", "errors"].contains(command)
     }
 
     static func printUsage() {
         print("""
-        \(bold("RustyMacBackup v\(version) — Native macOS Backup Tool"))
+        \(bold("RustyMacBackup v\(version) -- Safe Dev Config Backup"))
 
-        Usage: RustyMacBackup [global-options] <command> [options]
+        Usage: RustyMacBackup [options] <command>
 
-        Global options:
-          -c, --config <path>    Usa file config personalizzato
+        Options:
+          -c, --config <path>    Use custom config file
 
         Commands:
-          init            First-time setup wizard
+          init            Setup wizard (discovers dev tool configs)
           backup          Run backup now
           stop            Stop running backup
           status          Show backup status
           list            List backup snapshots
           prune           Clean up old backups
-          restore         Restore file from backup
+          restore         Restore from backup
           config          Manage configuration
           schedule        Manage backup schedule
+          discover        Show detected dev tool configs
           errors          Show backup errors
           version         Show version
           help            Show this help
@@ -101,25 +81,35 @@ enum CLIHandler {
         FileHandle.standardError.write(Data("\(red("Error")): \(message)\n".utf8))
     }
 
+    private static func runDiscover() {
+        let found = ConfigDiscovery.discover()
+        if found.isEmpty {
+            print("No dev tool configs detected.")
+            return
+        }
+        print(bold("Detected dev tool configurations:\n"))
+        var currentCategory = ""
+        for item in found {
+            if item.category != currentCategory {
+                currentCategory = item.category
+                print(bold(blue("  \(currentCategory)")))
+            }
+            let sens = item.sensitive ? yellow(" [sensitive]") : ""
+            print("    \(item.label)\(sens)")
+            for path in item.paths {
+                print("      \(path)")
+            }
+        }
+    }
+
     private static func runBackup(configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
-        let fda = FDACheck.checkFullDiskAccess()
-        if !fda.hasAccess {
-            print(yellow("⚠ Full Disk Access non disponibile per: \(fda.missingPaths.joined(separator: ", "))"))
-            print(yellow("  Apri Impostazioni → Privacy → Full Disk Access e aggiungi RustyMacBackup"))
-        }
-
         let sem = DispatchSemaphore(value: 0)
-        final class ErrorBox: @unchecked Sendable {
-            var error: Error?
-        }
+        final class ErrorBox: @unchecked Sendable { var error: Error? }
         let box = ErrorBox()
         Task {
-            do {
-                try await BackupEngine.run(config: cfg)
-            } catch {
-                box.error = error
-            }
+            do { try await BackupEngine.run(config: cfg) }
+            catch { box.error = error }
             sem.signal()
         }
         sem.wait()
@@ -129,519 +119,330 @@ enum CLIHandler {
     private static func runStop(configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
         let lockURL = URL(fileURLWithPath: cfg.destination.path).appendingPathComponent("rustymacbackup.lock")
-        let fm = FileManager.default
-
-        guard fm.fileExists(atPath: lockURL.path) else {
-            print("Nessun backup in esecuzione.")
-            return
+        guard FileManager.default.fileExists(atPath: lockURL.path) else {
+            print("No backup running."); return
         }
-
         let content = try String(contentsOf: lockURL, encoding: .utf8)
-        let pidValue = parsePID(from: content)
-
-        guard let pid = pidValue else {
-            try? fm.removeItem(at: lockURL)
-            print(green("✅ Lock file non valido rimosso."))
-            return
+        guard let pid = parsePID(from: content) else {
+            try? FileManager.default.removeItem(at: lockURL)
+            print(green("Stale lock removed.")); return
         }
-
         if Darwin.kill(pid, 0) != 0 {
-            try? fm.removeItem(at: lockURL)
-            print(green("✅ Nessun processo attivo (lock stale rimosso)."))
-            return
+            try? FileManager.default.removeItem(at: lockURL)
+            print(green("No active process (stale lock removed).")); return
         }
-
         if Darwin.kill(pid, SIGTERM) == 0 {
-            print(green("✅ Segnale di stop inviato al backup (PID \(pid))."))
+            print(green("Stop signal sent to backup (PID \(pid))."))
         } else {
-            throw NSError(domain: "CLI", code: 1, userInfo: [NSLocalizedDescriptionKey: "Impossibile terminare processo PID \(pid)"])
+            throw err("Cannot terminate process PID \(pid)")
         }
     }
 
     private static func runStatus(configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
+        print(bold(blue("RustyMacBackup Status\n")))
+
         let statusURL = URL(fileURLWithPath: StatusWriter.statusPath)
-
-        print(bold(blue("RustyMacBackup Status")))
-        print("")
-
         if FileManager.default.fileExists(atPath: statusURL.path),
            let data = try? Data(contentsOf: statusURL),
            let status = try? JSONDecoder().decode(BackupStatusFile.self, from: data) {
             switch status.state {
             case "running":
-                print("Stato: \(yellow(bold("RUNNING")))")
-                print("Progress: \(status.filesDone)/\(status.filesTotal) file")
-                print("ETA: \(status.etaSecs)s")
-                print("Velocità: \(BackupEngine.formatBytes(status.bytesPerSec))/s")
-                if !status.currentFile.isEmpty {
-                    print("File corrente: \(status.currentFile)")
-                }
+                print("State: \(yellow(bold("RUNNING")))")
+                print("Progress: \(status.filesDone)/\(status.filesTotal) files")
+                print("Speed: \(BackupEngine.formatBytes(status.bytesPerSec))/s")
             case "idle":
-                print("Stato: \(green("IDLE"))")
+                print("State: \(green("IDLE"))")
                 if !status.lastCompleted.isEmpty {
-                    print("Ultimo backup: \(status.lastCompleted)")
-                    print("Durata: \(String(format: "%.1f", status.lastDurationSecs))s")
-                    print("File: \(status.filesTotal)")
+                    print("Last backup: \(status.lastCompleted)")
+                    print("Duration: \(String(format: "%.1f", status.lastDurationSecs))s")
+                    print("Files: \(status.filesTotal)")
                 }
             case "error":
-                print("Stato: \(red(bold("ERROR")))")
-                print("Errori: \(status.errors)")
-                if !status.currentFile.isEmpty {
-                    print("Ultimo file: \(status.currentFile)")
-                }
+                print("State: \(red(bold("ERROR")))")
+                print("Errors: \(status.errors)")
             default:
-                print("Stato: \(status.state)")
+                print("State: \(status.state)")
             }
         } else {
-            print(yellow("Nessun file status.json trovato."))
+            print(yellow("No status file found."))
         }
 
         print("")
-        let destPath = cfg.destination.path
-        let diskInfo = DiskDiagnostics.diskSpace(at: destPath)
-        let free = BackupEngine.formatBytes(diskInfo.free)
-        let total = BackupEngine.formatBytes(diskInfo.total)
-        let volumeName = volumeDisplayName(path: destPath)
-        let level = DiskDiagnostics.spaceColorLevel(free: diskInfo.free)
-        let freeLabel: String
-        switch level {
-        case .verde: freeLabel = green(free)
-        case .warning: freeLabel = yellow(free)
-        case .rosso: freeLabel = red(free)
+        print(bold("Backup Folders"))
+        for path in cfg.source.paths {
+            let exists = FileManager.default.fileExists(atPath: ConfigDiscovery.expand(path))
+            print("  \(exists ? green("*") : red("x")) \(path)")
         }
 
-        print(bold("Disco"))
-        print("Volume: \(volumeName)")
-        print("Spazio libero: \(freeLabel) / \(total)")
+        print("")
+        let diskInfo = DiskDiagnostics.diskSpace(at: cfg.destination.path)
+        print(bold("Disk"))
+        print("Volume: \(volumeDisplayName(path: cfg.destination.path))")
+        print("Free: \(BackupEngine.formatBytes(diskInfo.free)) / \(BackupEngine.formatBytes(diskInfo.total))")
 
-        let backups = RetentionManager.listBackups(at: URL(fileURLWithPath: destPath))
-        print("Snapshot: \(backups.count)")
-        if let latest = backups.first {
-            print("Ultimo snapshot: \(latest.name)")
-        }
+        let backups = RetentionManager.listBackups(at: URL(fileURLWithPath: cfg.destination.path))
+        print("Snapshots: \(backups.count)")
     }
 
     private static func runPrune(subArgs: [String], configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
         let dryRun = subArgs.contains("--dry-run")
-        let destURL = URL(fileURLWithPath: cfg.destination.path)
-        let pruned = RetentionManager.pruneBackups(at: destURL, policy: cfg.retention, dryRun: dryRun)
-        if pruned.isEmpty {
-            print(green("Nothing to prune."))
-        } else {
-            print("\(dryRun ? "Would prune" : "Pruned") \(pruned.count) backup(s)")
-        }
+        let pruned = RetentionManager.pruneBackups(
+            at: URL(fileURLWithPath: cfg.destination.path), policy: cfg.retention, dryRun: dryRun)
+        print(pruned.isEmpty ? green("Nothing to prune.") : "\(dryRun ? "Would prune" : "Pruned") \(pruned.count) backup(s)")
     }
 
     private static func runList(configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
         let backups = RetentionManager.listBackups(at: URL(fileURLWithPath: cfg.destination.path))
-        if backups.isEmpty {
-            print("No backups found.")
-            return
-        }
-
-        print(bold("📦 Backups"))
-        for backup in backups {
-            let size = RetentionManager.directorySize(at: backup.url)
-            print("  \(backup.name)  \(BackupEngine.formatBytes(size))")
+        if backups.isEmpty { print("No backups found."); return }
+        print(bold("Backups"))
+        for b in backups {
+            print("  \(b.name)  \(BackupEngine.formatBytes(RetentionManager.directorySize(at: b.url)))")
         }
         print("\n\(backups.count) backup(s)")
     }
 
     private static func runRestore(subArgs: [String], configPath: String?) throws {
         guard let snapshot = subArgs.first else {
-            throw usageError("Usage: restore <snapshot-name> [path] --to <destination>")
+            throw err("Usage: restore <snapshot> [path] --to <destination>")
         }
-
         var relativePath: String?
         var toPath: String?
         var i = 1
         while i < subArgs.count {
-            let arg = subArgs[i]
-            if arg == "--to" {
-                guard i + 1 < subArgs.count else {
-                    throw usageError("Usage: restore <snapshot-name> [path] --to <destination>")
-                }
-                toPath = subArgs[i + 1]
-                i += 2
+            if subArgs[i] == "--to" {
+                guard i + 1 < subArgs.count else { throw err("Missing --to value") }
+                toPath = subArgs[i + 1]; i += 2
             } else if relativePath == nil {
-                relativePath = arg
-                i += 1
-            } else {
-                throw usageError("Argomento inatteso: \(arg)")
-            }
+                relativePath = subArgs[i]; i += 1
+            } else { throw err("Unexpected: \(subArgs[i])") }
         }
 
         let cfg = try loadConfig(configPath: configPath)
         let snapshotURL = URL(fileURLWithPath: cfg.destination.path).appendingPathComponent(snapshot)
         guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
-            throw usageError("Snapshot non trovato: \(snapshot)")
+            throw err("Snapshot not found: \(snapshot)")
         }
 
         let sourceURL = relativePath.map { snapshotURL.appendingPathComponent($0) } ?? snapshotURL
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw usageError("Percorso non trovato nello snapshot: \(relativePath ?? ".")")
+            throw err("Path not found in snapshot: \(relativePath ?? ".")")
         }
 
-        let destinationBase: URL = {
-            if let toPath {
-                return URL(fileURLWithPath: expandPath(toPath))
+        // Restrict restore to home directory by default
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let destBase: URL
+        if let tp = toPath {
+            let expanded = expandPath(tp)
+            guard expanded.hasPrefix(home) else {
+                throw err("Restore destination must be within your home directory")
             }
-            if let relativePath {
-                return URL(fileURLWithPath: cfg.source.path).appendingPathComponent(relativePath)
-            }
-            return URL(fileURLWithPath: cfg.source.path)
-        }()
-
-        let destinationURL = resolvedDestination(source: sourceURL, destination: destinationBase)
-        let parent = destinationURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            throw usageError("Destinazione già esistente: \(destinationURL.path)")
+            destBase = URL(fileURLWithPath: expanded)
+        } else {
+            destBase = URL(fileURLWithPath: home)
         }
 
-        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-        print(green("✅ Ripristino completato"))
-        print("Da: \(sourceURL.path)")
-        print("A:  \(destinationURL.path)")
+        let destURL = resolvedDest(source: sourceURL, dest: destBase)
+        guard !FileManager.default.fileExists(atPath: destURL.path) else {
+            throw err("Destination already exists: \(destURL.path)")
+        }
+
+        try FileManager.default.createDirectory(
+            at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: sourceURL, to: destURL)
+        print(green("Restored: \(destURL.path)"))
     }
 
     private static func runConfig(subArgs: [String], configPath: String?) throws {
         guard let action = subArgs.first else {
-            throw usageError("Usage: config <show|source|dest|exclude|include|excludes|retention|edit>")
+            throw err("Usage: config <show|add|remove|excludes|retention|edit>")
         }
-
         let pathURL = URL(fileURLWithPath: configPath.map(expandPath) ?? Config.defaultPath.path)
 
         switch action {
         case "show":
             let cfg = try loadConfig(configPath: configPath)
-            print("\(bold("Config file:")) \(pathURL.path)")
-            print("")
+            print(bold("Config: \(pathURL.path)\n"))
             print(bold(blue("[source]")))
-            print("path = \"\(cfg.source.path)\"")
-            print("extra_paths = [")
-            for extra in cfg.source.extraPaths { print("  \"\(extra)\",") }
-            print("]")
-            print("")
+            print("paths = [")
+            for p in cfg.source.paths { print("  \"\(p)\",") }
+            print("]\n")
             print(bold(blue("[destination]")))
-            print("path = \"\(cfg.destination.path)\"")
-            print("")
+            print("path = \"\(cfg.destination.path)\"\n")
             print(bold(blue("[exclude]")))
-            print("patterns = [")
-            for pattern in cfg.exclude.patterns { print("  \"\(pattern)\",") }
-            print("]")
+            for p in cfg.exclude.patterns { print("  \(p)") }
             print("")
             print(bold(blue("[retention]")))
-            print("hourly = \(cfg.retention.hourly)")
-            print("daily = \(cfg.retention.daily)")
-            print("weekly = \(cfg.retention.weekly)")
-            print("monthly = \(cfg.retention.monthly)")
-
-        case "source":
-            guard subArgs.count >= 2 else { throw usageError("Usage: config source <path>") }
-            var cfg = try loadConfig(configPath: configPath)
-            cfg.source.path = expandPath(subArgs[1])
-            try cfg.save(to: pathURL)
-            print(green("✅ Source aggiornata: \(cfg.source.path)"))
-
-        case "dest":
-            guard subArgs.count >= 2 else { throw usageError("Usage: config dest <path>") }
-            var cfg = try loadConfig(configPath: configPath)
-            cfg.destination.path = expandPath(subArgs[1])
-            try cfg.save(to: pathURL)
-            print(green("✅ Destinazione aggiornata: \(cfg.destination.path)"))
-
-        case "exclude":
-            guard subArgs.count >= 2 else { throw usageError("Usage: config exclude <pattern>") }
-            var cfg = try loadConfig(configPath: configPath)
-            let pattern = subArgs[1]
-            if cfg.exclude.patterns.contains(pattern) {
-                print(yellow("Pattern già presente: \(pattern)"))
-            } else {
-                cfg.exclude.patterns.append(pattern)
-                try cfg.save(to: pathURL)
-                print(green("✅ Pattern aggiunto: \(pattern)"))
-            }
-
-        case "include":
-            guard subArgs.count >= 2 else { throw usageError("Usage: config include <pattern>") }
-            var cfg = try loadConfig(configPath: configPath)
-            let pattern = subArgs[1]
-            let oldCount = cfg.exclude.patterns.count
-            cfg.exclude.patterns.removeAll { $0 == pattern }
-            if cfg.exclude.patterns.count == oldCount {
-                print(yellow("Pattern non trovato: \(pattern)"))
-            } else {
-                try cfg.save(to: pathURL)
-                print(green("✅ Pattern rimosso: \(pattern)"))
-            }
-
-        case "excludes":
-            let cfg = try loadConfig(configPath: configPath)
-            print(bold("Exclude patterns"))
-            if cfg.exclude.patterns.isEmpty {
-                print("(nessuno)")
-            } else {
-                for (idx, pattern) in cfg.exclude.patterns.enumerated() {
-                    print("  \(idx + 1). \(pattern)")
-                }
-            }
-
-        case "retention":
-            var cfg = try loadConfig(configPath: configPath)
-            let updates = try parseRetentionArgs(Array(subArgs.dropFirst()))
-            if let h = updates.hourly { cfg.retention.hourly = h }
-            if let d = updates.daily { cfg.retention.daily = d }
-            if let w = updates.weekly { cfg.retention.weekly = w }
-            if let m = updates.monthly { cfg.retention.monthly = m }
-            try cfg.save(to: pathURL)
-            print(green("✅ Retention aggiornata"))
             print("hourly=\(cfg.retention.hourly) daily=\(cfg.retention.daily) weekly=\(cfg.retention.weekly) monthly=\(cfg.retention.monthly)")
+
+        case "add":
+            guard subArgs.count >= 2 else { throw err("Usage: config add <path>") }
+            var cfg = try loadConfig(configPath: configPath)
+            let path = ConfigDiscovery.contract(expandPath(subArgs[1]))
+            guard !ConfigDiscovery.isForbidden(path) else {
+                throw err("Path is system-protected: \(path)")
+            }
+            guard !cfg.source.paths.contains(path) else {
+                print(yellow("Already in config: \(path)")); return
+            }
+            cfg.source.paths.append(path)
+            try cfg.save(to: pathURL)
+            print(green("Added: \(path)"))
+
+        case "remove":
+            guard subArgs.count >= 2 else { throw err("Usage: config remove <path>") }
+            var cfg = try loadConfig(configPath: configPath)
+            let path = subArgs[1]
+            let old = cfg.source.paths.count
+            cfg.source.paths.removeAll { $0 == path }
+            guard cfg.source.paths.count < old else {
+                print(yellow("Not found: \(path)")); return
+            }
+            try cfg.save(to: pathURL)
+            print(green("Removed: \(path)"))
 
         case "edit":
             let editor = ProcessInfo.processInfo.environment["EDITOR"] ?? "nano"
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [editor, pathURL.path]
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus != 0 {
-                throw usageError("Editor terminato con errore")
-            }
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            p.arguments = [editor, pathURL.path]
+            try p.run(); p.waitUntilExit()
 
         default:
-            throw usageError("Azione config sconosciuta: \(action)")
+            throw err("Unknown config action: \(action)")
         }
     }
 
     private static func runSchedule(subArgs: [String]) throws {
         guard let action = subArgs.first else {
-            printScheduleStatus(ScheduleManager.scheduleStatus())
-            return
+            printScheduleStatus(ScheduleManager.scheduleStatus()); return
         }
-
         switch action {
         case "on":
-            let plist = ScheduleManager.generatePlist(intervalSeconds: 3600)
-            try ScheduleManager.installSchedule(plistContent: plist)
-            print(green("✅ Schedule attivato: ogni 60 minuti"))
+            try ScheduleManager.installSchedule(plistContent: ScheduleManager.generatePlist(intervalSeconds: 3600))
+            print(green("Schedule on: every 60 min"))
         case "off":
             try ScheduleManager.removeSchedule()
-            print(green("✅ Schedule disattivato"))
+            print(green("Schedule off"))
         case "status":
             printScheduleStatus(ScheduleManager.scheduleStatus())
         case "interval":
-            guard subArgs.count > 1, let minutes = Int(subArgs[1]) else {
-                throw usageError("Usage: schedule interval <minutes>")
-            }
-            let plist = ScheduleManager.generatePlist(intervalSeconds: minutes * 60)
-            try ScheduleManager.installSchedule(plistContent: plist)
-            print(green("✅ Schedule: ogni \(minutes) minuti"))
+            guard subArgs.count > 1, let m = Int(subArgs[1]) else { throw err("Usage: schedule interval <minutes>") }
+            try ScheduleManager.installSchedule(plistContent: ScheduleManager.generatePlist(intervalSeconds: m * 60))
+            print(green("Schedule: every \(m) min"))
         case "daily":
-            guard subArgs.count > 1, let hour = Int(subArgs[1]), (0...23).contains(hour) else {
-                throw usageError("Usage: schedule daily <hour 0-23>")
+            guard subArgs.count > 1, let h = Int(subArgs[1]), (0...23).contains(h) else {
+                throw err("Usage: schedule daily <hour 0-23>")
             }
-            let plist = ScheduleManager.generatePlistDaily(hour: hour)
-            try ScheduleManager.installSchedule(plistContent: plist)
-            print(green("✅ Schedule: ogni giorno alle \(hour):00"))
-        default:
-            throw usageError("Unknown schedule action: \(action)")
+            try ScheduleManager.installSchedule(plistContent: ScheduleManager.generatePlistDaily(hour: h))
+            print(green("Schedule: daily at \(h):00"))
+        default: throw err("Unknown schedule action: \(action)")
         }
+    }
+
+    private static func runInit(configPath: String?) throws {
+        let volumes = discoverVolumes()
+        guard !volumes.isEmpty else {
+            throw err("No external disk found. Connect a disk and retry.")
+        }
+        print("\nAvailable disks:")
+        for (i, vol) in volumes.enumerated() {
+            let space = DiskDiagnostics.diskSpace(at: vol.path)
+            print("  \(i + 1). \(vol.lastPathComponent)  (\(space.free / 1_073_741_824) GB free)")
+        }
+        print("Select disk (1-\(volumes.count)): ", terminator: "")
+        guard let raw = readLine(), let sel = Int(raw), (1...volumes.count).contains(sel) else {
+            throw err("Invalid selection")
+        }
+        let backupDir = volumes[sel - 1].appendingPathComponent("RustyMacBackup")
+        try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+
+        let config = generateDefaultConfig(backupPath: backupDir.path)
+        let configURL = URL(fileURLWithPath: configPath.map(expandPath) ?? Config.defaultPath.path)
+        try config.save(to: configURL)
+        print(green("Config saved: \(configURL.path)"))
+        print("\nBacking up \(config.source.paths.count) paths:")
+        for p in config.source.paths { print("  \(p)") }
+        print("\nRun 'RustyMacBackup backup' to start.")
     }
 
     private static func runErrors(subArgs: [String]) {
         let showAll = subArgs.contains("--all")
-        let errorPath = StatusWriter.errorPath
-        guard FileManager.default.fileExists(atPath: errorPath),
-              let data = try? Data(contentsOf: URL(fileURLWithPath: errorPath)),
+        guard FileManager.default.fileExists(atPath: StatusWriter.errorPath),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: StatusWriter.errorPath)),
               let errorFile = try? JSONDecoder().decode(BackupErrorFile.self, from: data) else {
-            print("No errors recorded.")
-            return
+            print("No errors recorded."); return
         }
         print(ErrorReporter.formatActionableMessage(error: errorFile))
         if showAll {
             for (cat, info) in errorFile.categories where info.count > 0 {
                 print("\n\(cat):")
-                for file in info.files {
-                    print("  \(file)")
-                }
+                for file in info.files { print("  \(file)") }
             }
         }
     }
 
-    private static func runInitWizard(configPath: String?) throws {
-        if configPath != nil {
-            print(yellow("⚠ init usa sempre il path config indicato da -c/--config"))
-        }
-
-        let fda = FDACheck.checkFullDiskAccess()
-        if !fda.hasAccess {
-            print(yellow("⚠ Full Disk Access non disponibile"))
-            print("  Percorsi non accessibili: \(fda.missingPaths.joined(separator: ", "))")
-            print("  Apri Impostazioni → Privacy → Full Disk Access")
-            print("  Aggiungi RustyMacBackup.app e riavvia")
-            print("")
-            print("Vuoi continuare comunque? (s/n): ", terminator: "")
-            guard readLine()?.lowercased().starts(with: "s") == true else { exit(0) }
-        } else {
-            print(green("✅ Full Disk Access: OK"))
-        }
-
-        let volumes = discoverVolumes()
-        if volumes.isEmpty {
-            throw usageError("Nessun disco esterno trovato. Collega un disco e riprova.")
-        }
-
-        print("\nDischi disponibili:")
-        for (i, vol) in volumes.enumerated() {
-            let space = DiskDiagnostics.diskSpace(at: vol.path)
-            let freeGB = space.free / 1_073_741_824
-            print("  \(i + 1). \(vol.lastPathComponent)  (\(freeGB) GB liberi)")
-        }
-
-        print("Seleziona disco (1-\(volumes.count)): ", terminator: "")
-        guard let raw = readLine(), let selected = Int(raw), (1...volumes.count).contains(selected) else {
-            throw usageError("Selezione non valida")
-        }
-        let selectedVolume = volumes[selected - 1]
-
-        let encrypted = DiskDiagnostics.checkEncryption(volume: selectedVolume.path)
-        if !encrypted {
-            print(yellow("⚠ Disco non crittografato!"))
-            print("  Si consiglia di attivare la crittografia in Utility Disco")
-            print("  Continuare comunque? (s/n): ", terminator: "")
-            guard readLine()?.lowercased().starts(with: "s") == true else { exit(0) }
-        }
-
-        let backupDir = selectedVolume.appendingPathComponent("RustyMacBackup")
-        try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
-        print(green("✅ Directory creata: \(backupDir.path)"))
-
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let configContent = generateDefaultConfig(homePath: home, backupPath: backupDir.path)
-        let configURL = URL(fileURLWithPath: configPath.map(expandPath) ?? Config.defaultPath.path)
-        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try configContent.write(to: configURL, atomically: true, encoding: .utf8)
-        print(green("✅ Config salvata: \(configURL.path)"))
-
-        print("\nVuoi eseguire il primo backup adesso? (s/n): ", terminator: "")
-        if readLine()?.lowercased().starts(with: "s") == true {
-            print("Avvio backup iniziale...")
-            try runBackup(configPath: configURL.path)
-        }
-    }
+    // MARK: - Helpers
 
     static func discoverVolumes() -> [URL] {
         let fm = FileManager.default
         guard let volumes = fm.mountedVolumeURLs(
-            includingResourceValuesForKeys: [.volumeNameKey, .volumeIsRemovableKey],
-            options: [.skipHiddenVolumes]
-        ) else {
-            return []
-        }
-
-        return volumes.filter { url in
-            let path = url.path
-            if path == "/" || path == "/System/Volumes/Data" { return false }
-            if url.lastPathComponent == "Macintosh HD" { return false }
-            return path.hasPrefix("/Volumes/")
+            includingResourceValuesForKeys: [.volumeNameKey],
+            options: [.skipHiddenVolumes]) else { return [] }
+        return volumes.filter { u in
+            let p = u.path
+            return p != "/" && p != "/System/Volumes/Data"
+                && u.lastPathComponent != "Macintosh HD" && p.hasPrefix("/Volumes/")
         }
     }
 
-    private static func printScheduleStatus(_ status: ScheduleStatus) {
-        guard status.installed else {
-            print("Schedule: off")
-            return
-        }
-        if let mins = status.intervalMinutes {
-            print("Schedule: every \(mins) minutes")
-        } else if let hour = status.dailyHour {
-            print("Schedule: daily at \(hour):00")
-        } else {
-            print("Schedule: on")
-        }
+    private static func printScheduleStatus(_ s: ScheduleStatus) {
+        if !s.installed { print("Schedule: off"); return }
+        if let m = s.intervalMinutes { print("Schedule: every \(m) min") }
+        else if let h = s.dailyHour { print("Schedule: daily at \(h):00") }
+        else { print("Schedule: on") }
     }
 
-    private static func loadConfig(configPath: String? = nil) throws -> Config {
-        let url = configPath.map { URL(fileURLWithPath: expandPath($0)) } ?? Config.defaultPath
-        return try Config.load(from: url)
+    private static func loadConfig(configPath: String?) throws -> Config {
+        try Config.load(from: configPath.map { URL(fileURLWithPath: expandPath($0)) } ?? Config.defaultPath)
     }
 
-    private static func parsePID(from lockContent: String) -> Int32? {
-        for line in lockContent.split(separator: "\n") {
+    private static func parsePID(from content: String) -> Int32? {
+        for line in content.split(separator: "\n") {
             let part = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
             if part.hasPrefix("pid:") {
-                if let value = Int32(part.replacingOccurrences(of: "pid:", with: "").trimmingCharacters(in: .whitespaces)) {
-                    return value
-                }
-            } else if let value = Int32(part) {
-                return value
-            }
+                return Int32(part.replacingOccurrences(of: "pid:", with: "").trimmingCharacters(in: .whitespaces))
+            } else if let v = Int32(part) { return v }
         }
         return nil
     }
 
-    private static func parseRetentionArgs(_ args: [String]) throws -> (hourly: UInt32?, daily: UInt32?, weekly: UInt32?, monthly: UInt32?) {
-        var hourly: UInt32?
-        var daily: UInt32?
-        var weekly: UInt32?
-        var monthly: UInt32?
-
-        var i = 0
-        while i < args.count {
-            guard i + 1 < args.count, let value = UInt32(args[i + 1]) else {
-                throw usageError("Usage: config retention --hourly N --daily N --weekly N --monthly N")
-            }
-            switch args[i] {
-            case "--hourly": hourly = value
-            case "--daily": daily = value
-            case "--weekly": weekly = value
-            case "--monthly": monthly = value
-            default:
-                throw usageError("Flag retention sconosciuta: \(args[i])")
-            }
-            i += 2
+    private static func resolvedDest(source: URL, dest: URL) -> URL {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: dest.path, isDirectory: &isDir), isDir.boolValue {
+            return dest.appendingPathComponent(source.lastPathComponent)
         }
-        return (hourly, daily, weekly, monthly)
-    }
-
-    private static func resolvedDestination(source: URL, destination: URL) -> URL {
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory)
-        if exists && isDirectory.boolValue {
-            return destination.appendingPathComponent(source.lastPathComponent)
-        }
-        return destination
+        return dest
     }
 
     private static func volumeDisplayName(path: String) -> String {
-        let components = URL(fileURLWithPath: path).pathComponents
-        if components.count > 2, components[1] == "Volumes" {
-            return components[2]
-        }
-        return URL(fileURLWithPath: path).lastPathComponent
+        let c = URL(fileURLWithPath: path).pathComponents
+        return c.count > 2 && c[1] == "Volumes" ? c[2] : URL(fileURLWithPath: path).lastPathComponent
     }
 
-    private static func usageError(_ message: String) -> NSError {
-        NSError(domain: "CLI", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    private static func expandPath(_ p: String) -> String { (p as NSString).expandingTildeInPath }
+    private static func err(_ msg: String) -> NSError {
+        NSError(domain: "CLI", code: 1, userInfo: [NSLocalizedDescriptionKey: msg])
     }
 
-    private static func expandPath(_ path: String) -> String {
-        (path as NSString).expandingTildeInPath
+    private static func colored(_ t: String, _ c: String) -> String {
+        isatty(STDOUT_FILENO) != 0 ? "\u{001B}[\(c)m\(t)\u{001B}[0m" : t
     }
-
-    private static func colored(_ text: String, _ code: String) -> String {
-        guard isatty(STDOUT_FILENO) != 0 else { return text }
-        return "\u{001B}[\(code)m\(text)\u{001B}[0m"
-    }
-
-    static func green(_ text: String) -> String { colored(text, "32") }
-    static func red(_ text: String) -> String { colored(text, "31") }
-    static func yellow(_ text: String) -> String { colored(text, "33") }
-    static func blue(_ text: String) -> String { colored(text, "34") }
-    static func bold(_ text: String) -> String { colored(text, "1") }
+    static func green(_ t: String) -> String { colored(t, "32") }
+    static func red(_ t: String) -> String { colored(t, "31") }
+    static func yellow(_ t: String) -> String { colored(t, "33") }
+    static func blue(_ t: String) -> String { colored(t, "34") }
+    static func bold(_ t: String) -> String { colored(t, "1") }
 }

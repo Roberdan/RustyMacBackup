@@ -4,10 +4,9 @@ final class ConfigParserTests {
     func test_parseFullConfig() throws {
         let toml = """
         [source]
-        path = "/Users/test"
-        extra_paths = [
-            "/Applications",
-            "/opt/homebrew",
+        paths = [
+            "/Users/test/.zshrc",
+            "/Users/test/.gitconfig",
         ]
         [destination]
         path = "/Volumes/Backup/RustyMacBackup"
@@ -24,8 +23,7 @@ final class ConfigParserTests {
         try toml.write(to: tmp, atomically: true, encoding: .utf8)
 
         let config = try Config.load(from: tmp)
-        try expectEqual(config.source.path, "/Users/test", "source path mismatch")
-        try expectEqual(config.source.extraPaths.count, 2, "extra_paths count mismatch")
+        try expectEqual(config.source.paths.count, 2, "paths count mismatch")
         try expectEqual(config.destination.path, "/Volumes/Backup/RustyMacBackup", "destination path mismatch")
         try expect(config.exclude.patterns.contains("node_modules"), "exclude should contain node_modules")
         try expectEqual(config.retention.hourly, 12, "hourly mismatch")
@@ -37,7 +35,7 @@ final class ConfigParserTests {
     func test_defaultRetention() throws {
         let toml = """
         [source]
-        path = "/Users/test"
+        paths = ["/Users/test/.zshrc"]
         [destination]
         path = "/Volumes/Backup"
         [exclude]
@@ -58,7 +56,7 @@ final class ConfigParserTests {
         let toml = """
         # comment
         [source]
-        path = "/Users/test"
+        paths = ["/Users/test/.zshrc"]
         [destination]
         path = "/Volumes/Backup"
         [exclude]
@@ -69,12 +67,12 @@ final class ConfigParserTests {
         try toml.write(to: tmp, atomically: true, encoding: .utf8)
 
         let config = try Config.load(from: tmp)
-        try expectEqual(config.source.path, "/Users/test", "comment handling failed")
+        try expectEqual(config.source.paths.first, "/Users/test/.zshrc", "comment handling failed")
     }
 
     func test_roundTrip() throws {
         let config1 = Config(
-            source: SourceConfig(path: "/Users/test", extraPaths: ["/Applications"]),
+            source: SourceConfig(paths: ["/Users/test/.zshrc", "/Users/test/GitHub"]),
             destination: DestinationConfig(path: "/Volumes/Backup"),
             exclude: ExcludeConfig(patterns: ["*.tmp"]),
             retention: RetentionConfig(hourly: 24, daily: 30, weekly: 52, monthly: 0)
@@ -84,13 +82,13 @@ final class ConfigParserTests {
         try config1.save(to: tmp)
 
         let config2 = try Config.load(from: tmp)
-        try expectEqual(config1.source.path, config2.source.path, "source mismatch after round-trip")
+        try expectEqual(config1.source.paths, config2.source.paths, "source mismatch after round-trip")
         try expectEqual(config1.destination.path, config2.destination.path, "destination mismatch after round-trip")
         try expectEqual(config1.exclude.patterns, config2.exclude.patterns, "exclude mismatch after round-trip")
         try expectEqual(config1.retention.hourly, config2.retention.hourly, "retention mismatch after round-trip")
     }
 
-    func test_extraPathsParsed() throws {
+    func test_legacyConfigMigration() throws {
         let toml = """
         [source]
         path = "/Users/test"
@@ -105,6 +103,9 @@ final class ConfigParserTests {
         try toml.write(to: tmp, atomically: true, encoding: .utf8)
 
         let config = try Config.load(from: tmp)
-        try expectEqual(config.source.extraPaths, ["/etc", "/Library"], "extra_paths parse failed")
+        // Legacy format should migrate: path + extra_paths -> paths
+        try expectEqual(config.source.paths.count, 3, "legacy migration should produce 3 paths")
+        try expectEqual(config.source.paths[0], "/Users/test", "legacy path should be first")
+        try expectEqual(config.source.paths[1], "/etc", "extra_paths should follow")
     }
 }
