@@ -60,9 +60,16 @@ enum EnvironmentSnapshot {
     }
 
     private static func captureBrewfile(to dir: URL) {
+        // Use brew directly (not via env/shell) to avoid sourcing .zshrc
+        let brewPath = FileManager.default.fileExists(atPath: "/opt/homebrew/bin/brew")
+            ? "/opt/homebrew/bin/brew" : "/usr/local/bin/brew"
+        guard FileManager.default.fileExists(atPath: brewPath) else { return }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["brew", "bundle", "dump", "--file=-", "--force"]
+        process.executableURL = URL(fileURLWithPath: brewPath)
+        process.arguments = ["bundle", "dump", "--file=-", "--force"]
+        // Clean environment to avoid triggering dotfile managers
+        process.environment = ["HOME": NSHomeDirectory(), "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice

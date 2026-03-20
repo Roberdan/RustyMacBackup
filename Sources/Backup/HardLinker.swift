@@ -18,11 +18,12 @@ enum HardLinker {
         try FileManager.default.linkItem(atPath: source, toPath: destination)
     }
 
-    /// Copy file using Apple's copyfile() with APFS clone support.
-    /// COPYFILE_CLONE attempts a copy-on-write clone first, falling back to a byte copy.
+    /// Copy file using Apple's copyfile() preserving all attributes.
+    /// NOTE: COPYFILE_CLONE (1<<20) was REMOVING source files when copying
+    /// across volumes (APFS -> ExFAT/HFS+). Use COPYFILE_ALL only.
     static func copyFile(from source: String, to destination: String) throws {
-        // COPYFILE_CLONE = 1<<20, COPYFILE_ALL = DATA|XATTR|STAT|ACL = 0x0F
-        let flags = copyfile_flags_t((UInt32(1) << 20) | UInt32(0x0F))
+        // COPYFILE_ALL = DATA|XATTR|STAT|ACL = 0x0F (NO CLONE!)
+        let flags = copyfile_flags_t(UInt32(0x0F))
         let result = Darwin.copyfile(source, destination, nil, flags)
         if result != 0 {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),

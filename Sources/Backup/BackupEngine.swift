@@ -13,17 +13,19 @@ enum BackupEngine {
         shouldCancel = false
         let destPath = config.destination.path
         let destURL = URL(fileURLWithPath: destPath)
-        let allPaths = config.source.allExpandedPaths()
 
-        // Validate all source paths exist and are safe
-        for path in allPaths {
-            guard FileManager.default.fileExists(atPath: path) else {
-                throw BackupError.sourceNotFound(path)
-            }
+        // Validate source paths: skip missing, block forbidden
+        var allPaths: [String] = []
+        for path in config.source.allExpandedPaths() {
             let contracted = ConfigDiscovery.contract(path)
             if ConfigDiscovery.isForbidden(contracted) {
                 Log.error("BLOCKED forbidden path: \(path)")
                 throw BackupError.forbiddenPath(path)
+            }
+            if FileManager.default.fileExists(atPath: path) {
+                allPaths.append(path)
+            } else {
+                Log.info("Skipping missing path: \(path)")
             }
         }
         guard isVolumeReallyMounted(destPath) else { throw BackupError.volumeNotMounted(destPath) }
@@ -120,7 +122,10 @@ enum BackupEngine {
             processResult(result, stats: &stats, errors: &errorList)
 
             // Post-copy verification: check source still exists
-            if !FileManager.default.fileExists(atPath: file.absolutePath) {
+            // Skip shell dotfiles (can be temporarily absent during shell init)
+            let isShellFile = file.relativePath.hasSuffix("shrc") || file.relativePath.hasSuffix("profile")
+                || file.relativePath.hasSuffix("shenv") || file.relativePath.hasSuffix("history")
+            if !isShellFile && !FileManager.default.fileExists(atPath: file.absolutePath) {
                 vanishedCount += 1
                 Log.warn("Source file vanished after copy: \(file.relativePath) (\(vanishedCount)/\(VANISHED_THRESHOLD))")
             }
@@ -151,7 +156,10 @@ enum BackupEngine {
         try FileManager.default.moveItem(at: inProgressURL, to: finalURL)
 
         // Capture portable environment snapshot (Brewfile, app list, restore script, app binary)
+        // Run AFTER backup completes, in a non-interactive shell to avoid triggering kaku/dotfile managers
+        Log.info("Capturing environment snapshot...")
         EnvironmentSnapshot.capture(to: finalURL)
+        Log.info("Environment snapshot complete")
 
         if !errorList.isEmpty {
             try? statusWriter.writeErrors(errors: categorizeErrors(errorList))

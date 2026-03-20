@@ -242,28 +242,28 @@ func generateDefaultConfig(backupPath: String) -> Config {
     }
 
     let defaultExcludes = [
-        // macOS system junk (CCC-recommended exclusions)
+        // macOS system junk (CCC-recommended)
         ".DS_Store", ".Trash", ".Trashes", ".Spotlight-V100",
         ".fseventsd", ".TemporaryItems", ".VolumeIcon.icns",
         "DocumentRevisions-V100",
-        // Dev build artifacts (regenerable)
-        "node_modules", ".git/objects", "target/debug", "target/release",
-        ".build", "*.tmp", "*.swp", ".cache", "__pycache__", ".venv", ".tox",
+        // Git internals (large object store -- repo is re-cloneable)
+        ".git/objects", ".git/lfs",
+        // Dev build artifacts (regenerable via build/install)
+        "node_modules", ".next", ".nuxt", "dist", "build/intermediates",
+        "target/debug", "target/release",
+        ".build", "DerivedData",
+        "__pycache__", ".venv", ".tox", "*.pyc",
+        ".cache", "*.tmp", "*.swp",
         // App caches inside backed-up dirs
-        "Caches", "Cache", "GPUCache", "ShaderCache", "Code Cache",
+        "Caches", "GPUCache", "ShaderCache", "Code Cache",
         "CachedData", "CachedExtensions", "CachedExtensionVSIXs",
         // Large binaries
         "*.iso", "*.dmg",
-        // Claude CLI internals (16 GB+ of build artifacts, debug data, etc.)
-        "rust", "debug", "worktrees", "file-history", "data",
-        "scripts", ".copilot-tracking",
-        // AI tool caches and databases (regenerable)
-        "embedding-cache.db", "embedding-cache.db-shm", "embedding-cache.db-wal",
-        "session-store.db", "session-store.db-shm", "session-store.db-wal",
-        "session.db", "marketplace-cache",
-        "*.jsonl",
-        // Logs everywhere
-        "logs", "*.log",
+        // AI tool caches (regenerable)
+        "embedding-cache.db*", "session-store.db*", "session.db",
+        "marketplace-cache", "*.jsonl",
+        // Logs
+        "*.log",
         // AI models (huge, re-downloadable)
         ".ollama/models", ".lmstudio",
     ]
