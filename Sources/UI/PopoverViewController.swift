@@ -16,7 +16,7 @@ protocol PopoverDelegate: AnyObject {
     func popoverGetConfig() -> Config?
 }
 
-class PopoverViewController: NSViewController, ToolToggleDelegate {
+class PopoverViewController: NSViewController, ToolToggleDelegate, RestoreWindowDelegate {
     weak var popoverDelegate: PopoverDelegate?
 
     private let outerStack = NSStackView()
@@ -322,6 +322,13 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         }
     }
 
+    // MARK: - RestoreWindowDelegate
+
+    func restoreWindowDidConfirm(snapshotURL: URL, selectedItems: [String], brewInstall: Bool) {
+        restoreWindowController = nil
+        popoverDelegate?.popoverDidRequestRestore(snapshotURL, items: selectedItems, brewInstall: brewInstall)
+    }
+
     // MARK: - ToolToggleDelegate
 
     func toolPathToggled(_ path: String, enabled: Bool) {
@@ -374,51 +381,21 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         }
     }
 
+    private var restoreWindowController: RestoreWindowController?
+
     @objc private func restoreTapped(_ sender: NSButton) {
         guard sender.tag < foundBackups.count else { return }
         let backup = foundBackups[sender.tag]
         guard let latest = backup.snapshots.first else { return }
         let snapshotURL = backup.backupDir.appendingPathComponent(latest)
-        let items = RestoreEngine.scanSnapshot(at: snapshotURL)
-        let hasBrewfile = FileManager.default.fileExists(
-            atPath: snapshotURL.appendingPathComponent("_environment/Brewfile").path)
 
-        let conflicts = items.filter(\.existsAtDest)
-        let newItems = items.filter { !$0.existsAtDest }
-
-        // Build detailed confirmation
-        let alert = NSAlert()
-        alert.messageText = "Restore from \(latest)?"
-        var details = "\(items.count) items to restore.\n"
-        if !newItems.isEmpty {
-            details += "\n\(newItems.count) new (will be created):"
-            for item in newItems.prefix(8) {
-                details += "\n  + ~/\(item.relativePath)"
-            }
-            if newItems.count > 8 { details += "\n  ... and \(newItems.count - 8) more" }
-        }
-        if !conflicts.isEmpty {
-            details += "\n\n\(conflicts.count) existing (will be OVERWRITTEN):"
-            for item in conflicts.prefix(8) {
-                details += "\n  ~ ~/\(item.relativePath)"
-            }
-            if conflicts.count > 8 { details += "\n  ... and \(conflicts.count - 8) more" }
-            details += "\n\nOverwritten files will be backed up to:"
-            details += "\n~/.rustybackup-pre-restore/ (recoverable)"
-        }
-        if hasBrewfile {
-            details += "\n\nHomebrew packages will be reinstalled from Brewfile."
-        }
-
-        alert.informativeText = details
-        alert.alertStyle = conflicts.isEmpty ? .informational : .warning
-        alert.addButton(withTitle: conflicts.isEmpty ? "Restore" : "Restore & Overwrite")
-        alert.addButton(withTitle: "Cancel")
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
-
-        popoverDelegate?.popoverDidRequestRestore(
-            snapshotURL, items: items.map(\.relativePath), brewInstall: hasBrewfile)
+        // Open restore window with per-item selection
+        let wc = RestoreWindowController(snapshotURL: snapshotURL)
+        wc.restoreDelegate = self
+        wc.showWindow(nil)
+        wc.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        restoreWindowController = wc  // retain
     }
 
     // MARK: - Disk selection
