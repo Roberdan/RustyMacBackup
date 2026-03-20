@@ -7,48 +7,68 @@ class IconManager {
 
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
-        setIcon(color: nil)
+        setIcon(dotColor: nil)
     }
 
     func setState(_ state: AppState) {
         currentState = state
         stopAnimations()
         switch state {
-        case .needsSetup:  setIcon(color: MLColor.warning)
-        case .idle:        setIcon(color: MLColor.success)
+        case .needsSetup:  setIcon(dotColor: .systemOrange)
+        case .idle:        setIcon(dotColor: .systemGreen)
         case .running:     startPulse()
-        case .error:       setIcon(color: MLColor.error)
-        case .diskAbsent:  setIcon(color: MLColor.error)
-        case .stale:       setIcon(color: MLColor.warning)
+        case .error:       setIcon(dotColor: .systemRed)
+        case .diskAbsent:  setIcon(dotColor: .systemRed)
+        case .stale:       setIcon(dotColor: .systemOrange)
         }
     }
 
-    private func setIcon(color: NSColor?) {
+    private func setIcon(dotColor: NSColor?) {
         guard let button = statusItem.button else { return }
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular, scale: .medium)
-        guard let symbol = NSImage(systemSymbolName: "clock.arrow.circlepath",
-                                    accessibilityDescription: "RustyMacBackup")?
-                .withSymbolConfiguration(config) else { return }
 
-        guard let dotColor = color else {
-            symbol.isTemplate = true
-            button.image = symbol
+        let symConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium, scale: .medium)
+        guard let baseSymbol = NSImage(systemSymbolName: "clock.arrow.circlepath",
+                                        accessibilityDescription: "RustyMacBackup")?
+                .withSymbolConfiguration(symConfig) else { return }
+
+        // No dot -- use system template rendering (auto white/black)
+        guard let dotColor = dotColor else {
+            baseSymbol.isTemplate = true
+            button.image = baseSymbol
             return
         }
 
-        let baseSize = symbol.size
-        let totalW = baseSize.width + 5
+        let baseSize = baseSymbol.size
+        let totalW = baseSize.width + 7
         let finalSize = NSSize(width: totalW, height: baseSize.height)
 
-        let composite = NSImage(size: finalSize, flipped: false) { _ in
-            let tinted = symbol.copy() as! NSImage
-            tinted.isTemplate = true
+        let composite = NSImage(size: finalSize, flipped: false) { rect in
+            // Draw icon tinted to match menu bar (white in dark, black in light)
+            let isDark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let iconColor: NSColor = isDark ? .white : .black
+
+            let tinted = baseSymbol.copy() as! NSImage
+            tinted.isTemplate = false
+            tinted.lockFocus()
+            iconColor.set()
+            NSRect(origin: .zero, size: baseSize).fill(using: .sourceAtop)
+            tinted.unlockFocus()
             tinted.draw(in: NSRect(origin: .zero, size: baseSize))
 
-            let dotD: CGFloat = 6
-            let dotRect = NSRect(x: totalW - dotD - 0.5, y: 0.5, width: dotD, height: dotD)
+            // Colored status dot (bottom-right)
+            let dotD: CGFloat = 7
+            let dotRect = NSRect(x: totalW - dotD, y: 0, width: dotD, height: dotD)
+
+            // Outline for contrast
+            let outlineRect = dotRect.insetBy(dx: -1, dy: -1)
+            let bgColor: NSColor = isDark ? NSColor(white: 0.1, alpha: 1) : .white
+            bgColor.setFill()
+            NSBezierPath(ovalIn: outlineRect).fill()
+
+            // Dot
             dotColor.setFill()
             NSBezierPath(ovalIn: dotRect).fill()
+
             return true
         }
         composite.isTemplate = false
@@ -56,11 +76,11 @@ class IconManager {
     }
 
     private func startPulse() {
-        setIcon(color: MLColor.accent)
+        setIcon(dotColor: .systemBlue)
         var on = true
         pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
             on.toggle()
-            self?.setIcon(color: on ? MLColor.accent : MLColor.accent.withAlphaComponent(0.3))
+            self?.setIcon(dotColor: on ? .systemBlue : .systemBlue.withAlphaComponent(0.3))
         }
     }
 
