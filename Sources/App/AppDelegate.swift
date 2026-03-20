@@ -124,32 +124,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         popover.performClose(nil)
         Log.info("Ejecting: \(volumePath.path)")
         DispatchQueue.global(qos: .userInitiated).async {
-            // Use diskutil eject which is more reliable than NSWorkspace
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
-            process.arguments = ["eject", volumePath.path]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let success = process.terminationStatus == 0
-                DispatchQueue.main.async {
-                    if success {
-                        Log.info("Disk ejected: \(volumeName)")
-                        self.sendNotification(title: "Disk ejected",
-                                             body: "\(volumeName) safely removed")
-                        self.iconManager.setState(.diskAbsent)
-                    } else {
-                        Log.error("Eject failed: \(volumeName)")
-                        self.sendNotification(title: "Eject failed",
-                                             body: "Could not eject \(volumeName)")
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    Log.error("Eject error: \(error)")
-                    self.sendNotification(title: "Eject failed", body: error.localizedDescription)
+            let success = Self.runDiskutil(["eject", volumePath.path])
+                || Self.runDiskutil(["unmount", "force", volumePath.path])
+            DispatchQueue.main.async {
+                if success {
+                    Log.info("Disk ejected: \(volumeName)")
+                    self.sendNotification(title: "Disk ejected",
+                                         body: "\(volumeName) safely removed")
+                    self.iconManager.setState(.diskAbsent)
+                } else {
+                    Log.error("Eject failed: \(volumeName)")
+                    self.sendNotification(title: "Eject failed",
+                                         body: "Another app is using \(volumeName). Close it and retry.")
                 }
             }
         }
@@ -295,6 +281,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
     }
 
     // MARK: - Helpers
+
+    private static func runDiskutil(_ args: [String]) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
+        p.arguments = args
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit(); return p.terminationStatus == 0 }
+        catch { return false }
+    }
 
     private func sendNotification(title: String, body: String) {
         guard Bundle.main.bundleIdentifier != nil else { return }
