@@ -14,7 +14,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         self.config = config
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Prevent macOS from auto-terminating this menu bar app
+        ProcessInfo.processInfo.automaticTerminationSupportEnabled = false
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         iconManager = IconManager(statusItem: statusItem)
         iconManager.setState(.idle)
