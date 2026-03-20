@@ -199,15 +199,26 @@ enum ConfigDiscovery {
         ("Dev Tools", "uv (Python)", ["~/.config/uv"], false),
         ("Dev Tools", "Homebrew Bundle", ["~/.Brewfile", "~/Brewfile"], false),
 
-        // Cloud CLIs (config only, mark sensitive)
-        ("Cloud", "GitHub CLI", ["~/.config/gh"], true),
-        ("Cloud", "AWS config", ["~/.aws/config"], true),
-        ("Cloud", "GCP config", ["~/.config/gcloud/properties"], true),
-        ("Cloud", "Azure CLI", ["~/.azure"], true),
-        ("Cloud", "Stripe CLI", ["~/.config/stripe"], true),
+        // Auth & Tokens -- separate from config so user can toggle independently
+        ("Auth", "GitHub CLI auth", ["~/.config/gh/hosts.yml"], true),
+        ("Auth", "SSH private keys", ["~/.ssh/id_ed25519", "~/.ssh/id_rsa",
+                                       "~/.ssh/id_ed25519_innersource",
+                                       "~/.ssh/id_ed25519_microsoft"], true),
+        ("Auth", "npm auth", ["~/.npmrc"], true),
+        ("Auth", "Cargo auth", ["~/.cargo/credentials.toml"], true),
+        ("Auth", "Docker auth", ["~/.docker/config.json"], true),
+        ("Auth", "AWS credentials", ["~/.aws/credentials"], true),
+        ("Auth", "Azure tokens", ["~/.azure/azureProfile.json", "~/.azure/az.sess"], true),
+        ("Auth", "GCP credentials", ["~/.config/gcloud/application_default_credentials.json"], true),
+        ("Auth", "Stripe auth", ["~/.config/stripe/config.toml"], true),
+        ("Auth", "VS Code auth", ["~/Library/Application Support/Code/User/globalStorage/github.login"], true),
+        ("Auth", "Cursor auth", ["~/Library/Application Support/Cursor/User/globalStorage/github.login"], true),
 
-        // Containers
-        ("Containers", "Docker config", ["~/.docker/config.json"], true),
+        // Cloud CLIs (config only, NOT credentials)
+        ("Cloud", "AWS config", ["~/.aws/config"], false),
+        ("Cloud", "GCP config", ["~/.config/gcloud/properties"], false),
+        ("Cloud", "Azure config", ["~/.azure/config"], false),
+        ("Cloud", "Stripe config", ["~/.config/stripe"], false),
 
         // macOS Preferences (safe plist files -- read-only copies)
         ("macOS", "Keyboard shortcuts", ["~/Library/Preferences/com.apple.symbolichotkeys.plist"], false),
