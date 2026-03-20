@@ -12,6 +12,7 @@ class ToolsCategoryView: NSStackView {
     private var items: [(label: String, paths: [String], sensitive: Bool)] = []
     private var enabledPaths: Set<String> = []
     private var expanded = true
+    var isReadOnly = false
     private let itemStack = NSStackView()
     private let chevronLabel = NSTextField(labelWithString: "")
 
@@ -100,8 +101,8 @@ class ToolsCategoryView: NSStackView {
         let allEnabled = item.paths.allSatisfy { enabledPaths.contains($0) }
         let check = NSButton(checkboxWithTitle: "", target: self, action: #selector(checkboxToggled(_:)))
         check.state = allEnabled ? .on : .off
-        // Store paths as represented object via tag mapping
         check.tag = items.firstIndex(where: { $0.label == item.label }) ?? 0
+        check.isEnabled = !isReadOnly
         row.addArrangedSubview(check)
 
         // Tool name

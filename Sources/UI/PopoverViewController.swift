@@ -137,6 +137,10 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         toolsHeaderLabel.textColor = .labelColor
         toolsHeaderRow.addArrangedSubview(toolsHeaderLabel)
         toolsHeaderRow.addArrangedSubview(hSpacer())
+        let selectAllBtn = NSButton(title: "All", target: self, action: #selector(selectAllTapped))
+        selectAllBtn.bezelStyle = .inline
+        selectAllBtn.font = .systemFont(ofSize: 11, weight: .medium)
+        toolsHeaderRow.addArrangedSubview(selectAllBtn)
         let addBtn = NSButton(title: "+ Add", target: self, action: #selector(addFolderTapped))
         addBtn.bezelStyle = .inline
         addBtn.font = .systemFont(ofSize: 11, weight: .medium)
@@ -256,6 +260,7 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
 
         // Progress
         let running = state == .running
+        isBackupRunning = running
         progressBar.isHidden = !running
         progressLabel.isHidden = !running
         if running, let s = status {
@@ -272,6 +277,8 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
     }
 
     // MARK: - Tools list with categories
+
+    private var isBackupRunning = false
 
     private func rebuildToolsList(config: Config?) {
         categoryViews.forEach { $0.removeFromSuperview() }
@@ -307,6 +314,7 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         for group in grouped {
             let catView = ToolsCategoryView(category: group.category)
             catView.toggleDelegate = self
+            catView.isReadOnly = isBackupRunning
             catView.configure(items: group.items, enabledPaths: enabledPaths)
             catView.translatesAutoresizingMaskIntoConstraints = false
             toolsStack.addArrangedSubview(catView)
@@ -476,6 +484,16 @@ class PopoverViewController: NSViewController, ToolToggleDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         popoverDelegate?.popoverDidRequestUndoRestore()
+    }
+
+    @objc private func selectAllTapped() {
+        let discovered = ConfigDiscovery.discover()
+        for item in discovered {
+            for path in item.paths {
+                popoverDelegate?.popoverDidTogglePath(path, enabled: true)
+            }
+        }
+        refresh()
     }
 
     @objc private func backupTapped() {

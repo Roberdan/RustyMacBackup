@@ -181,6 +181,8 @@ enum ConfigDiscovery {
         ("AI Tools", "Claude CLI memory", ["~/.claude/agent-memory"], false),
         ("AI Tools", "Claude CLI projects", ["~/.claude/projects"], false),
         ("AI Tools", "Claude AGENTS.md", ["~/.claude/AGENTS.md"], false),
+        ("AI Tools", "Claude plans DB", ["~/.claude/data/plan-db.sqlite", "~/.claude/plans"], false),
+        ("AI Tools", "Claude scripts", ["~/.claude/scripts"], false),
         ("AI Tools", "GitHub Copilot", ["~/.config/github-copilot"], false),
         ("AI Tools", "gh-copilot", ["~/.config/gh-copilot"], false),
         ("AI Tools", "OpenAI", ["~/.config/openai"], false),
