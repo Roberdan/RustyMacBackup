@@ -14,12 +14,14 @@ class IconManager {
         currentState = state
         stopAnimations()
         switch state {
-        case .needsSetup:  setIcon(dotColor: .systemOrange)
-        case .idle:        setIcon(dotColor: .systemGreen)
-        case .running:     startPulse()
-        case .error:       setIcon(dotColor: .systemRed)
-        case .diskAbsent:  setIcon(dotColor: .systemRed)
-        case .stale:       setIcon(dotColor: .systemOrange)
+        case .needsSetup:          setIcon(dotColor: .systemOrange)
+        case .idle:                setIcon(dotColor: .systemGreen)
+        case .running:             startPulse(color: MLColor.gold)
+        case .stopping:            startPulse(color: .systemOrange)
+        case .restoring:           startPulse(color: .systemBlue)
+        case .error:               setIcon(dotColor: .systemRed)
+        case .diskAbsent:          setIcon(dotColor: .systemRed)
+        case .stale:               setIcon(dotColor: .systemOrange)
         }
     }
 
@@ -75,12 +77,18 @@ class IconManager {
         button.image = composite
     }
 
-    private func startPulse() {
-        setIcon(dotColor: .systemBlue)
-        var on = true
-        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
-            on.toggle()
-            self?.setIcon(dotColor: on ? .systemBlue : .systemBlue.withAlphaComponent(0.3))
+    // F-22: 3-frame pulse animation with brand color — gold for backup, orange for stopping, blue for restore
+    private func startPulse(color: NSColor) {
+        let frames: [NSColor] = [
+            color,
+            color.withAlphaComponent(0.55),
+            color.withAlphaComponent(0.2)
+        ]
+        var frame = 0
+        setIcon(dotColor: frames[0])
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            frame = (frame + 1) % frames.count
+            self?.setIcon(dotColor: frames[frame])
         }
     }
 

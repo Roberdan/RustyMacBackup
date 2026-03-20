@@ -66,6 +66,7 @@ enum BackupEngine {
         let startTime = Date()
         var status = BackupStatusFile()
         status.state = "running"
+        status.phase = "scanning"
         status.startedAt = ISO8601DateFormatter().string(from: startTime)
         status.currentFile = "Avvio backup..."
         do { try statusWriter.write(status: status) } catch { Log.error("Status write failed at start: \(error)") }
@@ -180,6 +181,7 @@ enum BackupEngine {
                     }
                     status.errors = UInt64(errorList.count)
                     status.currentFile = file.relativePath
+                    status.phase = stats.bytesCopied > 0 ? "copying" : "scanning"
                     try? statusWriter.write(status: status)
                 }
             }
@@ -199,6 +201,7 @@ enum BackupEngine {
         if shouldCancel {
             try? FileManager.default.removeItem(at: inProgressURL)
             status.state = "cancelled"
+            status.phase = "cancelled"
             status.currentFile = "Backup annullato"
             do { try statusWriter.write(status: status) } catch { Log.error("Status write failed on cancel: \(error)") }
             return
@@ -221,6 +224,7 @@ enum BackupEngine {
         let totalFiles = processedCount
         let duration = Date().timeIntervalSince(startTime)
         status.state = "idle"
+        status.phase = "finalizing"
         status.filesDone = totalFiles
         status.filesTotal = totalFiles
         status.lastCompleted = ISO8601DateFormatter().string(from: Date())

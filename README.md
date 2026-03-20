@@ -9,7 +9,7 @@ Safe, fast backup of your dev configurations and chosen folders. A Time Machine 
 - **Safe by design** -- whitelist-only, forbidden path enforcement, no system directory access
 - **Auto-discovery** -- detects installed dev tools (shells, editors, terminals, Git, SSH, etc.)
 - **Incremental backups** with hard links (unchanged files = zero extra space)
-- **APFS clone support** -- instant file copies via `copyfile()` with `COPYFILE_CLONE`
+- **Fast file copies** via `copyfile()` with full attribute preservation (DATA|XATTR|STAT|ACL) — `COPYFILE_CLONE` intentionally excluded (destroys source files when copying across volumes)
 - **Parallel I/O** -- 8 concurrent workers via Swift `TaskGroup`
 - **SwiftUI tree view** -- collapsible categories (Shell, Git, SSH, Terminal, Editor, AI Tools, Auth, Cloud, macOS, Repos) with tri-state checkboxes
 - **Auto-update** -- checks GitHub releases on launch, downloads and installs in-place preserving FDA permissions

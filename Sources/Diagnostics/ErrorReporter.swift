@@ -56,6 +56,36 @@ enum ErrorReporter {
         )
     }
 
+    static func localizedTitle(for category: String) -> String {
+        switch category {
+        case "permission_denied": return "Permesso negato"
+        case "not_found":         return "File non trovato"
+        case "no_space":          return "Disco pieno"
+        case "io_error":          return "Errore di lettura/scrittura"
+        default:                  return "Errore generico"
+        }
+    }
+
+    static func suggestedAction(for category: String) -> String {
+        switch category {
+        case "permission_denied":
+            return "Apri Impostazioni → Privacy → Accesso completo al disco e verifica che RustyMacBackup sia abilitato."
+        case "not_found":
+            return "Alcuni file sono stati spostati o eliminati durante il backup."
+        case "no_space":
+            return "Libera spazio sul disco di backup o aumenta lo spazio disponibile."
+        case "io_error":
+            return "Controlla la salute del disco di backup con Utility Disco."
+        default:
+            return "Apri il log per i dettagli."
+        }
+    }
+
+    static var logURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/share/rusty-mac-backup/backup.log")
+    }
+
     static func formatActionableMessage(error: BackupErrorFile) -> String {
         if error.total == 0 {
             return "Nessun errore durante il backup."

@@ -263,8 +263,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleStop() {
+        // F-14: .stopping shows "Stopping…" in UI until engine drain confirms idle
+        uiState.appState = .stopping
+        iconManager.setState(.stopping)
         BackupEngine.stop()
-        iconManager.setState(.idle)
         pollStatus()
     }
 
@@ -338,7 +340,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         iconManager.setState(.running)
-        uiState.appState = .running
+        uiState.appState = .restoring  // F-14: distinct state from backup .running
         Log.info("Restore started: \(items.count) items from \(snapshotURL.lastPathComponent)")
         sendNotification(title: "Restore avviato",
                          body: "Ripristino \(items.count) elementi da \(snapshotURL.lastPathComponent)…")
@@ -386,6 +388,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.sendNotification(
                     title: "Restore complete",
                     body: "\(result.restored) restored, \(result.overwritten) overwritten, \(result.failed) failed\(brewMsg)\(backupMsg)")
+
+                // F-18: Show restore result card for 60s
+                self?.uiState.restoreResult = RestoreResultSummary(
+                    restored: result.restored, overwritten: result.overwritten,
+                    failed: result.failed, backedUpTo: result.backedUpTo)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                    self?.uiState.restoreResult = nil
+                }
 
                 let backupDir = snapshotURL.deletingLastPathComponent()
                 let newConfig = generateDefaultConfig(backupPath: backupDir.path)
@@ -451,11 +461,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func pollStatus() {
         let newState = statusManager.poll(config: config)
-        iconManager.setState(newState)
-        // Push updated state to SwiftUI via AppUIState.
-        uiState.appState = newState
+        // F-14: don't clobber .stopping/.restoring set by action handlers
+        if newState != .running || (uiState.appState != .stopping && uiState.appState != .restoring) {
+            iconManager.setState(newState)
+            uiState.appState = newState
+        }
         uiState.status = statusManager.lastStatus
         uiState.config = config
+        // F-19: update cached disk-state values (disk I/O here, not in SwiftUI render)
+        uiState.cachedHasBackups = config != nil && !RestoreEngine.findBackupSnapshots().isEmpty
+        uiState.cachedCanUndo = RestoreEngine.hasPreRestoreBackup()
     }
 
     // MARK: - Helpers

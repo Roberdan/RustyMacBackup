@@ -2,6 +2,7 @@ import Foundation
 
 struct BackupStatusFile: Codable {
     var state: String
+    var phase: String          // F-21: scanning | copying | linking | finalizing | cancelled
     var startedAt: String
     var lastCompleted: String
     var lastDurationSecs: Double
@@ -15,6 +16,7 @@ struct BackupStatusFile: Codable {
 
     enum CodingKeys: String, CodingKey {
         case state
+        case phase
         case startedAt = "started_at"
         case lastCompleted = "last_completed"
         case lastDurationSecs = "last_duration_secs"
@@ -25,6 +27,19 @@ struct BackupStatusFile: Codable {
         case etaSecs = "eta_secs"
         case errors
         case currentFile = "current_file"
+    }
+
+    init(state: String = "idle", phase: String = "",
+         startedAt: String = "", lastCompleted: String = "",
+         lastDurationSecs: Double = 0,
+         filesTotal: UInt64 = 0, filesDone: UInt64 = 0,
+         bytesCopied: UInt64 = 0, bytesPerSec: UInt64 = 0,
+         etaSecs: UInt64 = 0, errors: UInt64 = 0, currentFile: String = "") {
+        self.state = state; self.phase = phase; self.startedAt = startedAt
+        self.lastCompleted = lastCompleted; self.lastDurationSecs = lastDurationSecs
+        self.filesTotal = filesTotal; self.filesDone = filesDone
+        self.bytesCopied = bytesCopied; self.bytesPerSec = bytesPerSec
+        self.etaSecs = etaSecs; self.errors = errors; self.currentFile = currentFile
     }
 }
 

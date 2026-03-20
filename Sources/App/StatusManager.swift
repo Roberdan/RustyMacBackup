@@ -4,6 +4,8 @@ enum AppState {
     case needsSetup
     case idle
     case running
+    case stopping    // F-14: engine drain after Stop pressed
+    case restoring   // F-14: restore in progress
     case error
     case diskAbsent
     case stale
@@ -48,7 +50,10 @@ class StatusManager {
                     return kill(pid, 0) == 0
                 }()
                 if lockAlive {
-                    currentState = .running
+                    // Keep .stopping/.restoring if already set by AppDelegate — don't override
+                    if currentState != .stopping && currentState != .restoring {
+                        currentState = .running
+                    }
                     return currentState
                 }
                 // Stale lock (process crashed) — remove and mark idle

@@ -42,6 +42,7 @@ enum BackupError: LocalizedError {
 extension BackupStatusFile {
     init() {
         state = "idle"
+        phase = ""
         startedAt = ""
         lastCompleted = ""
         lastDurationSecs = 0

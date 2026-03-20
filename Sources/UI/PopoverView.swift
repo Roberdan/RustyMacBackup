@@ -32,34 +32,54 @@ struct PopoverView: View {
 
     @ViewBuilder
     private var updateBanner: some View {
-        if let version = state.updateAvailable {
+        if let version = state.updateAvailable,
+           state.dismissedUpdateVersion != version {
             Divider()
-            Button { state.onRequestUpdate?() } label: {
-                HStack(spacing: 8) {
-                    if state.isUpdating {
-                        ProgressView().controlSize(.small)
-                        Text("Aggiornamento in corso…")
-                            .font(.subheadline)
-                            .foregroundColor(.mlInfo)
-                    } else {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .foregroundColor(.mlInfo)
-                        Text("Aggiornamento v\(version) disponibile")
-                            .font(.subheadline)
-                            .foregroundColor(.mlInfo)
-                        Spacer()
-                        Text("Installa")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.mlInfo)
+            HStack(spacing: 8) {
+                Button { state.onRequestUpdate?() } label: {
+                    HStack(spacing: 8) {
+                        if state.isUpdating {
+                            ProgressView().controlSize(.small)
+                            // F-17: explicit install phase text
+                            Text(updatePhaseLabel)
+                                .font(.subheadline).foregroundColor(.mlInfo)
+                        } else {
+                            Image(systemName: "arrow.down.circle.fill").foregroundColor(.mlInfo)
+                            Text("Aggiornamento v\(version) disponibile")
+                                .font(.subheadline).foregroundColor(.mlInfo)
+                            Spacer()
+                            Text("Installa").font(.subheadline.weight(.semibold)).foregroundColor(.mlInfo)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                .disabled(state.isUpdating)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.mlInfo.opacity(0.08))
+                .accessibilityHint("Scarica e installa la versione \(version)")
+
+                // F-17: Dismiss button
+                if !state.isUpdating {
+                    Button {
+                        state.dismissedUpdateVersion = version
+                    } label: {
+                        Image(systemName: "xmark").font(.caption).foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Ignora aggiornamento \(version)")
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(state.isUpdating)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.mlInfo.opacity(0.08))
+        }
+    }
+
+    private var updatePhaseLabel: String {
+        switch state.updatePhase {
+        case .downloading: return "Scaricamento…"
+        case .verifying:   return "Verifica firma…"
+        case .installing:  return "Installazione…"
+        case nil:          return "Aggiornamento in corso…"
         }
     }
 
@@ -70,12 +90,16 @@ struct PopoverView: View {
             Circle()
                 .fill(statusDotColor)
                 .frame(width: 8, height: 8)
+                .accessibilityLabel("Stato: \(statusText)")  // F-16: non solo colore
             Text("RustyMacBackup")
                 .font(.headline)
             Spacer()
-            Text(statusBadge)
-                .font(.caption.weight(.semibold))
-                .foregroundColor(statusDotColor)
+            if !statusBadge.isEmpty {
+                Text(statusBadge)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(statusDotColor)
+                    .accessibilityLabel(statusBadge)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -93,7 +117,7 @@ struct PopoverView: View {
                 Text("\(Fmt.timeAgo(from: s.lastCompleted))  ·  \(Fmt.formatFileCount(s.filesTotal)) files  ·  \(Fmt.formatBytes(s.bytesCopied))")
                     .font(.caption)
                     .foregroundColor(.secondary)
-            } else if state.appState != .running {
+            } else if state.appState != .running && state.appState != .restoring && state.appState != .stopping {
                 Text("No backups yet")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -103,12 +127,96 @@ struct PopoverView: View {
                 diskSpaceRow(for: c)
             }
 
-            if state.isRunning, let s = state.status {
+            // F-15: Diagnostics card when last backup failed
+            if state.appState == .error {
+                errorCard
+            }
+
+            // F-18: Restore result card visible for 60s after completion
+            if let result = state.restoreResult {
+                restoreResultCard(result)
+            }
+
+            if (state.appState == .running || state.appState == .restoring || state.appState == .stopping),
+               let s = state.status {
                 progressSection(status: s)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - F-15: Error diagnostics card
+
+    @ViewBuilder
+    private var errorCard: some View {
+        if let errors = loadErrors(), let topCategory = topErrorCategory(errors) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.mlRosso)
+                        .font(.caption)
+                    Text(ErrorReporter.localizedTitle(for: topCategory))
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.mlRosso)
+                }
+                Text(ErrorReporter.suggestedAction(for: topCategory))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Mostra log") {
+                        NSWorkspace.shared.open(ErrorReporter.logURL)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.plain)
+                    .foregroundColor(.mlInfo)
+                    .accessibilityHint("Apre il file di log in Console")
+                    Button("Riprova") { state.onRequestBackup?() }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundColor(.mlInfo)
+                        .accessibilityHint("Avvia un nuovo backup")
+                }
+            }
+            .padding(8)
+            .background(Color.mlRosso.opacity(0.07))
+            .cornerRadius(6)
+            .padding(.top, 4)
+        }
+    }
+
+    private func loadErrors() -> BackupErrorFile? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: StatusWriter.errorPath)) else { return nil }
+        return try? JSONDecoder().decode(BackupErrorFile.self, from: data)
+    }
+
+    private func topErrorCategory(_ errors: BackupErrorFile) -> String? {
+        errors.categories
+            .filter { $0.value.count > 0 }
+            .max(by: { $0.value.count < $1.value.count })?.key
+    }
+
+    // MARK: - F-18: Restore result card
+
+    @ViewBuilder
+    private func restoreResultCard(_ result: RestoreResultSummary) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill").foregroundColor(.mlVerde).font(.caption)
+                Text("Restore completato").font(.caption.weight(.semibold)).foregroundColor(.mlVerde)
+            }
+            Text("\(result.restored) ripristinati · \(result.overwritten) sovrascritti · \(result.failed) falliti")
+                .font(.caption2).foregroundColor(.secondary)
+            if !result.backedUpTo.isEmpty {
+                Text("Originali in ~/.rustybackup-pre-restore/")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+        }
+        .padding(8)
+        .background(Color.mlVerde.opacity(0.07))
+        .cornerRadius(6)
+        .padding(.top, 4)
     }
 
     @ViewBuilder
@@ -126,10 +234,22 @@ struct PopoverView: View {
     @ViewBuilder
     private func progressSection(status s: BackupStatusFile) -> some View {
         let pct = s.filesTotal > 0 ? Double(s.filesDone) / Double(s.filesTotal) : 0
+        // F-21: color reflects current backup phase
+        let phaseColor: Color = {
+            switch s.phase {
+            case "scanning":   return .secondary
+            case "copying":    return .mlGold
+            case "linking":    return .mlVerde
+            case "finalizing": return .mlVerde
+            case "cancelled":  return .mlRosso
+            default:           return .mlGold
+            }
+        }()
 
         VStack(alignment: .leading, spacing: 3) {
             ProgressView(value: pct)
-                .tint(.mlGold)
+                .tint(phaseColor)
+                .accessibilityValue("\(Int(pct * 100)) percento completato")  // F-16
 
             HStack(spacing: 8) {
                 if s.filesTotal > 0 {
@@ -214,22 +334,28 @@ struct PopoverView: View {
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !state.isRunning && state.appState != .needsSetup && state.appState != .diskAbsent {
-                actionButton("Backup…", icon: "arrow.up.doc") { state.onRequestBackup?() }
+                actionButton("Backup…", icon: "arrow.up.doc",
+                             hint: "Apre la selezione dei file e avvia il backup") { state.onRequestBackup?() }
             }
             if state.isRunning {
-                actionButton("Stop", icon: "stop.circle", tint: .mlRosso) { state.onRequestStop?() }
+                actionButton("Stop", icon: "stop.circle", tint: .mlRosso,
+                             hint: "Interrompe il backup in corso") { state.onRequestStop?() }
             }
             if state.hasBackups {
-                actionButton("Restore…", icon: "arrow.down.doc") { state.onRequestRestore?() }
+                actionButton("Restore…", icon: "arrow.down.doc",
+                             hint: "Ripristina file da uno snapshot di backup") { state.onRequestRestore?() }
             }
             if state.canUndo {
-                actionButton("Undo Last Restore", icon: "arrow.uturn.backward", tint: .orange) {
+                actionButton("Undo Last Restore", icon: "arrow.uturn.backward", tint: .orange,
+                             hint: "Ripristina i file originali sovrascritti dall'ultimo restore") {
                     state.onRequestUndoRestore?()
                 }
             }
             scheduleRow
-            actionButton("Open Backup Folder", icon: "folder") { state.onRequestOpenFolder?() }
-            actionButton("Eject Disk", icon: "eject") { state.onRequestEject?() }
+            actionButton("Open Backup Folder", icon: "folder",
+                         hint: "Apre la cartella di backup nel Finder") { state.onRequestOpenFolder?() }
+            actionButton("Eject Disk", icon: "eject",
+                         hint: "Smonta il disco di backup in modo sicuro") { state.onRequestEject?() }
         }
         .padding(.vertical, 4)
     }
@@ -250,6 +376,7 @@ struct PopoverView: View {
 
     @ViewBuilder
     private func actionButton(_ title: String, icon: String, tint: Color = .primary,
+                               hint: String = "",
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
@@ -261,18 +388,21 @@ struct PopoverView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
+        .accessibilityHint(hint)  // F-16
     }
 
     // MARK: - Helpers
 
     private var statusDotColor: Color {
         switch state.appState {
-        case .idle:       return .mlVerde
-        case .running:    return .mlGold
-        case .error:      return .mlRosso
-        case .diskAbsent: return .mlRosso
-        case .stale:      return .orange
-        case .needsSetup: return .mlInfo
+        case .idle:           return .mlVerde
+        case .running:        return .mlGold
+        case .stopping:       return .orange
+        case .restoring:      return .mlInfo
+        case .error:          return .mlRosso
+        case .diskAbsent:     return .mlRosso
+        case .stale:          return .orange
+        case .needsSetup:     return .mlInfo
         }
     }
 
@@ -280,6 +410,8 @@ struct PopoverView: View {
         switch state.appState {
         case .idle, .needsSetup: return ""
         case .running:    return "RUNNING"
+        case .stopping:   return "STOPPING"
+        case .restoring:  return "RESTORING"
         case .error:      return "ERROR"
         case .diskAbsent: return "NO DISK"
         case .stale:      return "OVERDUE"
@@ -291,6 +423,8 @@ struct PopoverView: View {
         case .needsSetup: return "Setup required — select a disk"
         case .idle:       return "Ready"
         case .running:    return "Backup in progress…"
+        case .stopping:   return "Stopping backup…"
+        case .restoring:  return "Restore in progress…"
         case .error:      return "Last backup failed"
         case .diskAbsent: return "Backup disk not connected"
         case .stale:      return "Backup overdue (>24h)"
