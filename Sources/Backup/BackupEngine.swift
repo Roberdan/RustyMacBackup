@@ -29,6 +29,10 @@ enum BackupEngine {
             }
         }
         guard isVolumeReallyMounted(destPath) else { throw BackupError.volumeNotMounted(destPath) }
+        // Security warning if backup disk is not encrypted
+        if !DiskDiagnostics.checkEncryption(volume: destPath) {
+            Log.warn("Backup disk is NOT encrypted -- sensitive data (SSH keys, tokens) at risk")
+        }
         // Warn if iCloud Desktop & Documents is active (can cause bird evictions)
         if isiCloudDesktopActive() {
             Log.warn("iCloud Desktop & Documents sync is ACTIVE -- using bird-safe mode")
