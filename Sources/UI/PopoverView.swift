@@ -8,24 +8,121 @@ struct PopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // ZONE 1 — Header (always visible, fixed height)
             headerSection
             updateBanner
             Divider()
-            statusSection
-            if state.appState == .needsSetup {
-                Divider()
-                diskSetupSection
-            }
+            // ZONE 2 — Health (status, stats, error/restore cards, progress)
+            healthZone
             Divider()
-            actionSection
+            // ZONE 3 — Actions (primary filled + secondary list)
+            actionsZone
             Divider()
-            footerSection
+            // ZONE 4 — Context (quit)
+            contextZone
         }
-        .frame(width: 300)
+        .frame(width: 320)
         .onAppear { if state.appState == .needsSetup { refreshVolumes() } }
         .onChange(of: state.appState) { _, newState in
             if newState == .needsSetup { refreshVolumes() }
         }
+    }
+
+    // MARK: - Zone 2: Health
+
+    private var healthZone: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            statusSection
+            if state.appState == .needsSetup {
+                Divider().padding(.horizontal, 14)
+                diskSetupSection
+            }
+        }
+        .frame(minHeight: 64, alignment: .top)
+    }
+
+    // MARK: - Zone 3: Actions
+
+    private var actionsZone: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Primary action — contextual, filled button
+            primaryActionButton
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+            // Secondary actions — always same structure for stable layout
+            secondaryActions
+        }
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private var primaryActionButton: some View {
+        switch state.appState {
+        case .running:
+            Button { state.onRequestStop?() } label: {
+                Label("Stop Backup", systemImage: "stop.circle.fill")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.mlRosso)
+            .accessibilityHint("Interrompe il backup in corso")
+
+        case .stopping:
+            Label("Stopping…", systemImage: "stop.circle")
+                .frame(maxWidth: .infinity, alignment: .center)
+                .foregroundColor(.secondary)
+                .font(.body)
+
+        case .restoring:
+            Label("Restore in corso…", systemImage: "arrow.down.doc")
+                .frame(maxWidth: .infinity, alignment: .center)
+                .foregroundColor(.secondary)
+                .font(.body)
+
+        case .needsSetup, .diskAbsent:
+            EmptyView()
+
+        default:
+            Button { state.onRequestBackup?() } label: {
+                Label("Start Backup", systemImage: "arrow.up.doc.fill")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.mlGold)
+            .accessibilityHint("Avvia un nuovo backup")
+        }
+    }
+
+    private var secondaryActions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if state.hasBackups {
+                actionButton("Ripristina snapshot…", icon: "arrow.down.doc",
+                             hint: "Ripristina file da uno snapshot di backup") { state.onRequestRestore?() }
+            }
+            if state.canUndo {
+                actionButton("Annulla ultimo restore", icon: "arrow.uturn.backward", tint: .orange,
+                             hint: "Ripristina i file originali sovrascritti dall'ultimo restore") {
+                    state.onRequestUndoRestore?()
+                }
+            }
+            scheduleRow
+            Divider().padding(.horizontal, 14).padding(.vertical, 2)
+            actionButton("Apri cartella backup", icon: "folder",
+                         hint: "Apre la cartella di backup nel Finder") { state.onRequestOpenFolder?() }
+            actionButton("Espelli disco", icon: "eject",
+                         hint: "Smonta il disco di backup in modo sicuro") { state.onRequestEject?() }
+        }
+    }
+
+    // MARK: - Zone 4: Context
+
+    private var contextZone: some View {
+        actionButton("Esci", icon: "power",
+                     hint: "Chiude RustyMacBackup") { state.onRequestQuit?() }
+            .padding(.vertical, 2)
     }
 
     // MARK: - Update banner
@@ -329,49 +426,15 @@ struct PopoverView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Actions
-
-    private var actionSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !state.isRunning && state.appState != .needsSetup && state.appState != .diskAbsent {
-                actionButton("Backup…", icon: "arrow.up.doc",
-                             hint: "Apre la selezione dei file e avvia il backup") { state.onRequestBackup?() }
-            }
-            if state.isRunning {
-                actionButton("Stop", icon: "stop.circle", tint: .mlRosso,
-                             hint: "Interrompe il backup in corso") { state.onRequestStop?() }
-            }
-            if state.hasBackups {
-                actionButton("Restore…", icon: "arrow.down.doc",
-                             hint: "Ripristina file da uno snapshot di backup") { state.onRequestRestore?() }
-            }
-            if state.canUndo {
-                actionButton("Undo Last Restore", icon: "arrow.uturn.backward", tint: .orange,
-                             hint: "Ripristina i file originali sovrascritti dall'ultimo restore") {
-                    state.onRequestUndoRestore?()
-                }
-            }
-            scheduleRow
-            actionButton("Open Backup Folder", icon: "folder",
-                         hint: "Apre la cartella di backup nel Finder") { state.onRequestOpenFolder?() }
-            actionButton("Eject Disk", icon: "eject",
-                         hint: "Smonta il disco di backup in modo sicuro") { state.onRequestEject?() }
-        }
-        .padding(.vertical, 4)
-    }
+    // (old actionSection removed — replaced by actionsZone above)
 
     @ViewBuilder
     private var scheduleRow: some View {
         if state.onRequestScheduleMenu != nil {
-            actionButton("Schedule: \(state.scheduleLabel)", icon: "clock") {
+            actionButton("Pianificazione: \(state.scheduleLabel)", icon: "clock") {
                 state.onRequestScheduleMenu?()
             }
         }
-    }
-
-    private var footerSection: some View {
-        actionButton("Quit", icon: "power") { state.onRequestQuit?() }
-            .padding(.bottom, 2)
     }
 
     @ViewBuilder
