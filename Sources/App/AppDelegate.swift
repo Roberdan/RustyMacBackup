@@ -17,8 +17,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Prevent macOS from auto-terminating this menu bar app
+        // Prevent macOS from auto-terminating this menu bar-only app
         ProcessInfo.processInfo.automaticTerminationSupportEnabled = false
+        ProcessInfo.processInfo.disableAutomaticTermination("Menu bar app must stay alive")
+        ProcessInfo.processInfo.disableSuddenTermination()
+        Log.info("App launched")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         iconManager = IconManager(statusItem: statusItem)
@@ -41,10 +44,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         if config == nil {
             config = try? Config.load(from: Config.defaultPath)
         }
+        Log.info("Config loaded: \(config != nil ? "\(config!.source.paths.count) paths" : "none")")
 
         // Only request notifications when running as a proper .app bundle
         if Bundle.main.bundleIdentifier != nil {
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+                Log.info("Notification auth: granted=\(granted) error=\(error?.localizedDescription ?? "none")")
+            }
         }
 
         let ws = NSWorkspace.shared
@@ -77,16 +83,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
         guard let config = config else { return }
         popover.performClose(nil)
         iconManager.setState(.running)
+        Log.info("Backup started: \(config.source.paths.count) paths -> \(config.destination.path)")
         Task.detached {
             do {
                 try await BackupEngine.run(config: config)
                 await MainActor.run {
+                    Log.info("Backup completed successfully")
                     self.sendNotification(title: "Backup completed",
                                          body: "Backup finished successfully")
                     self.pollStatus()
                 }
             } catch {
                 await MainActor.run {
+                    Log.error("Backup failed: \(error.localizedDescription)")
                     self.iconManager.setState(.error)
                     self.sendNotification(title: "Backup failed",
                                          body: error.localizedDescription)

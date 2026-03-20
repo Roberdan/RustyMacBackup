@@ -22,6 +22,7 @@ enum BackupEngine {
             }
             let contracted = ConfigDiscovery.contract(path)
             if ConfigDiscovery.isForbidden(contracted) {
+                Log.error("BLOCKED forbidden path: \(path)")
                 throw BackupError.forbiddenPath(path)
             }
         }
