@@ -175,7 +175,12 @@ enum ConfigDiscovery {
         ("Editor", "Xcode UserData", ["~/Library/Developer/Xcode/UserData"], false),
 
         // AI/LLM tools
-        ("AI Tools", "Claude CLI", ["~/.claude"], false),
+        // Claude CLI -- specific safe subdirs only (full ~/.claude/ is 16 GB+)
+        ("AI Tools", "Claude CLI settings", ["~/.claude/settings.json", "~/.claude/settings.local.json"], false),
+        ("AI Tools", "Claude CLI agents", ["~/.claude/agents"], false),
+        ("AI Tools", "Claude CLI memory", ["~/.claude/agent-memory"], false),
+        ("AI Tools", "Claude CLI projects", ["~/.claude/projects"], false),
+        ("AI Tools", "Claude AGENTS.md", ["~/.claude/AGENTS.md"], false),
         ("AI Tools", "GitHub Copilot", ["~/.config/github-copilot"], false),
         ("AI Tools", "gh-copilot", ["~/.config/gh-copilot"], false),
         ("AI Tools", "OpenAI", ["~/.config/openai"], false),
@@ -238,6 +243,11 @@ enum ConfigDiscovery {
         "~/Pictures/Photos Library.photoslibrary",
         "~/Pictures/Photo Booth Library",
         "~/Music/Music/Media.localized",
+        // Claude CLI build artifacts (16 GB+)
+        "~/.claude/rust", "~/.claude/debug", "~/.claude/worktrees",
+        "~/.claude/node_modules", "~/.claude/file-history",
+        "~/.claude/data", "~/.claude/scripts", "~/.claude/backups",
+        "~/.claude/logs", "~/.claude/.copilot-tracking",
         // System paths
         "/Library", "/System", "/etc", "/Applications", "/usr", "/opt", "/private",
     ]

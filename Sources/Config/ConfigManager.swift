@@ -254,10 +254,16 @@ func generateDefaultConfig(backupPath: String) -> Config {
         "CachedData", "CachedExtensions", "CachedExtensionVSIXs",
         // Large binaries
         "*.iso", "*.dmg",
+        // Claude CLI internals (16 GB+ of build artifacts, debug data, etc.)
+        "rust", "debug", "worktrees", "file-history", "data",
+        "scripts", ".copilot-tracking",
         // AI tool caches and databases (regenerable)
         "embedding-cache.db", "embedding-cache.db-shm", "embedding-cache.db-wal",
         "session-store.db", "session-store.db-shm", "session-store.db-wal",
-        "session.db", "logs", "marketplace-cache",
+        "session.db", "marketplace-cache",
+        "*.jsonl",
+        // Logs everywhere
+        "logs", "*.log",
         // AI models (huge, re-downloadable)
         ".ollama/models", ".lmstudio",
     ]

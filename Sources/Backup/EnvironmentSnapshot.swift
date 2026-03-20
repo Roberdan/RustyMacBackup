@@ -1,17 +1,62 @@
 import Foundation
 
+/// Machine identity for backup snapshots.
+struct MachineID: Codable {
+    let hostname: String
+    let serialNumber: String
+    let macOSVersion: String
+    let arch: String
+    let timestamp: String
+}
+
 /// Captures a portable snapshot of the dev environment before each backup.
-/// Generates Brewfile, app list, macOS info, and a restore script.
+/// Generates metadata.json, Brewfile, app list, macOS info, and a restore script.
 enum EnvironmentSnapshot {
     static func capture(to destURL: URL) {
         let envDir = destURL.appendingPathComponent("_environment")
         try? FileManager.default.createDirectory(at: envDir, withIntermediateDirectories: true)
 
+        writeMetadata(to: destURL)
         captureBrewfile(to: envDir)
         captureSystemInfo(to: envDir)
         captureAppList(to: envDir)
         copyAppBinary(to: envDir)
         generateRestoreScript(to: envDir)
+    }
+
+    /// Write machine identity to snapshot root as metadata.json
+    private static func writeMetadata(to snapshotDir: URL) {
+        let meta = MachineID(
+            hostname: ProcessInfo.processInfo.hostName,
+            serialNumber: serialNumber(),
+            macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            arch: machineArch(),
+            timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(meta) else { return }
+        try? data.write(to: snapshotDir.appendingPathComponent("metadata.json"), options: .atomic)
+    }
+
+    /// Read metadata from a snapshot directory (returns nil if not present).
+    static func readMetadata(from snapshotDir: URL) -> MachineID? {
+        let url = snapshotDir.appendingPathComponent("metadata.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(MachineID.self, from: data)
+    }
+
+    /// Get this machine's serial number via IOKit.
+    private static func serialNumber() -> String {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault,
+                                                   IOServiceMatching("IOPlatformExpertDevice"))
+        guard service != 0 else { return "unknown" }
+        defer { IOObjectRelease(service) }
+        let key = kIOPlatformSerialNumberKey as CFString
+        guard let serialRef = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0) else {
+            return "unknown"
+        }
+        return serialRef.takeRetainedValue() as? String ?? "unknown"
     }
 
     private static func captureBrewfile(to dir: URL) {
