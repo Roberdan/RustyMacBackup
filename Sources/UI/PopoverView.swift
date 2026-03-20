@@ -9,6 +9,7 @@ struct PopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerSection
+            updateBanner
             Divider()
             statusSection
             if state.appState == .needsSetup {
@@ -24,6 +25,41 @@ struct PopoverView: View {
         .onAppear { if state.appState == .needsSetup { refreshVolumes() } }
         .onChange(of: state.appState) { _, newState in
             if newState == .needsSetup { refreshVolumes() }
+        }
+    }
+
+    // MARK: - Update banner
+
+    @ViewBuilder
+    private var updateBanner: some View {
+        if let version = state.updateAvailable {
+            Divider()
+            Button { state.onRequestUpdate?() } label: {
+                HStack(spacing: 8) {
+                    if state.isUpdating {
+                        ProgressView().controlSize(.small)
+                        Text("Aggiornamento in corso…")
+                            .font(.subheadline)
+                            .foregroundColor(.mlInfo)
+                    } else {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundColor(.mlInfo)
+                        Text("Aggiornamento v\(version) disponibile")
+                            .font(.subheadline)
+                            .foregroundColor(.mlInfo)
+                        Spacer()
+                        Text("Installa")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.mlInfo)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.mlInfo.opacity(0.08))
+            }
+            .buttonStyle(.plain)
+            .disabled(state.isUpdating)
         }
     }
 

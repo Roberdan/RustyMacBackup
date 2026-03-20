@@ -56,6 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         uiState.onRequestQuit = { NSApplication.shared.terminate(nil) }
         uiState.onSelectDisk = { [weak self] url in self?.handleSelectDisk(url) }
         uiState.onRequestUndoRestore = { [weak self] in self?.handleUndoRestore() }
+        uiState.onRequestUpdate = { [weak self] in self?.handleRequestUpdate() }
     }
 
     private func deferredInit() {
@@ -81,6 +82,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pollTimer?.tolerance = 5.0
         pollStatus()
+
+        // Check for updates 5s after launch (non-blocking).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            Task {
+                if let version = await AutoUpdater.checkForUpdate() {
+                    DispatchQueue.main.async { self?.uiState.updateAvailable = version }
+                }
+            }
+        }
     }
 
     // MARK: - Popover
@@ -280,6 +290,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     title: "Undo restore complete",
                     body: "\(result.restored) files restored to original state, \(result.failed) failed")
                 self?.pollStatus()
+            }
+        }
+    }
+
+    // MARK: - Auto-update
+
+    private func handleRequestUpdate() {
+        guard let version = uiState.updateAvailable else { return }
+        uiState.isUpdating = true
+        Task {
+            do {
+                try await AutoUpdater.downloadAndInstall(version: version)
+                // If we reach here, install failed to relaunch — reset state.
+                DispatchQueue.main.async { self.uiState.isUpdating = false }
+            } catch {
+                Log.error("Update failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.uiState.isUpdating = false
+                    self.sendNotification(title: "Aggiornamento fallito", body: error.localizedDescription)
+                }
             }
         }
     }

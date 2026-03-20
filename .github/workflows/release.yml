@@ -7,59 +7,29 @@ on:
 permissions:
   contents: write
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   release:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
       - name: Get version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
-        run: cargo test --verbose
+        run: ./run-tests.sh
 
-      - name: Build release binary
-        run: cargo build --release
+      - name: Build + package (pkg + app.zip)
+        run: VERSION="${{ steps.version.outputs.VERSION }}" bash build-pkg.sh
 
-      - name: Build menu bar app
-        run: bash menubar/build.sh
-
-      - name: Stamp version in Info.plist
+      - name: Verify artifacts
         run: |
           VER="${{ steps.version.outputs.VERSION }}"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" menubar/RustyBackMenu.app/Contents/Info.plist
-          echo "✅ Version stamped: $VER"
-
-      - name: Build installer package
-        run: |
-          VER="${{ steps.version.outputs.VERSION }}"
-          # Update version in build-pkg.sh
-          sed -i '' "s/VERSION=\".*\"/VERSION=\"$VER\"/" build-pkg.sh
-          bash build-pkg.sh
-
-      - name: Rename package
-        run: |
-          VER="${{ steps.version.outputs.VERSION }}"
-          mv "RustyMacBackup-${VER}.pkg" "RustyMacBackup-${VER}-arm64.pkg"
-          ls -lh "RustyMacBackup-${VER}-arm64.pkg"
-
-      - name: Verify all artifacts
-        run: |
-          VER="${{ steps.version.outputs.VERSION }}"
-          test -f target/release/rustyback || { echo "❌ binary missing"; exit 1; }
           test -f "RustyMacBackup-${VER}-arm64.pkg" || { echo "❌ pkg missing"; exit 1; }
-          echo "✅ All release artifacts ready"
-          echo "   Binary: $(ls -lh target/release/rustyback | awk '{print $5}')"
-          echo "   Package: $(ls -lh RustyMacBackup-${VER}-arm64.pkg | awk '{print $5}')"
+          test -f "RustyMacBackup-${VER}.app.zip"    || { echo "❌ app.zip missing"; exit 1; }
+          echo "✅ pkg:     $(du -sh RustyMacBackup-${VER}-arm64.pkg | cut -f1)"
+          echo "✅ app.zip: $(du -sh RustyMacBackup-${VER}.app.zip | cut -f1)"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -68,4 +38,5 @@ jobs:
           generate_release_notes: true
           files: |
             RustyMacBackup-${{ steps.version.outputs.VERSION }}-arm64.pkg
-            target/release/rustyback
+            RustyMacBackup-${{ steps.version.outputs.VERSION }}.app.zip
+

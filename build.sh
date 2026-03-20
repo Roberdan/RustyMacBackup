@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="RustyMacBackup"
-VERSION="2.0.0"
+VERSION="${VERSION:-2.0.0}"
 BUILD_DIR="build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BINARY="$BUILD_DIR/$APP_NAME"
@@ -44,7 +44,10 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+# Stamp version into Info.plist
 cp Sources/App/Info.plist "$APP_BUNDLE/Contents/"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_BUNDLE/Contents/Info.plist"
 if [ -d "Resources/icons" ]; then
     cp Resources/icons/*.png "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
 fi

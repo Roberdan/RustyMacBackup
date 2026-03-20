@@ -2,22 +2,17 @@ import SwiftUI
 
 // MARK: - Data Model
 
-/// Three-state selection for category headers.
 enum CheckState { case on, off, mixed }
 
-/// Flat data model for an item in the tree.
 struct ItemInfo: Identifiable {
     let id = UUID()
-    /// All filesystem paths toggled together (e.g. zsh has 4 dotfiles, one row).
     let paths: [String]
     let label: String
     let sensitive: Bool
-    let isConflict: Bool   // restore mode: file already exists at destination
-
+    let isConflict: Bool
     var primaryPath: String { paths.first ?? "" }
 }
 
-/// A category grouping items in the tree.
 struct CategoryInfo: Identifiable {
     let id = UUID()
     let name: String
@@ -26,8 +21,6 @@ struct CategoryInfo: Identifiable {
 
 // MARK: - ViewModel
 
-/// All selection and expansion state. One `@Published` Set<String> drives everything
-/// reactively — no nested ObservableObjects needed.
 @MainActor
 final class TreeSelectionModel: ObservableObject {
     let mode: TreeWindowMode
@@ -38,7 +31,6 @@ final class TreeSelectionModel: ObservableObject {
     @Published var expandedCategories: Set<String>
     @Published var brewInstall: Bool = true
 
-    // Completion closures set by the caller (AppDelegate).
     var onConfirmBackup: (([String]) -> Void)?
     var onConfirmRestore: ((URL, [String], Bool) -> Void)?
     var onCancel: (() -> Void)?
@@ -58,22 +50,18 @@ final class TreeSelectionModel: ObservableObject {
                     catOrder.append(item.category)
                     catMap[item.category] = []
                 }
-                let info = ItemInfo(paths: item.paths, label: item.label,
-                                    sensitive: item.sensitive, isConflict: false)
-                catMap[item.category]!.append(info)
-
-                // Pre-check paths that are already in the config, or everything if first run.
+                catMap[item.category]!.append(
+                    ItemInfo(paths: item.paths, label: item.label,
+                             sensitive: item.sensitive, isConflict: false)
+                )
                 let shouldCheck = enabledPaths.isEmpty
                     || item.paths.allSatisfy { enabledPaths.contains($0) }
-                if shouldCheck {
-                    item.paths.forEach { initialChecked.insert($0) }
-                }
+                if shouldCheck { item.paths.forEach { initialChecked.insert($0) } }
             }
 
             categories = catOrder.map { CategoryInfo(name: $0, items: catMap[$0]!) }
             checkedPaths = initialChecked
-            // All categories start collapsed so the user sees a clean list of categories.
-            expandedCategories = []
+            expandedCategories = []       // collapsed by default
             hasBrewfile = false
 
         case .restore(let snapshotURL):
@@ -96,11 +84,10 @@ final class TreeSelectionModel: ObservableObject {
 
             var cats: [CategoryInfo] = []
             if !dotfiles.isEmpty { cats.append(CategoryInfo(name: "Dotfiles", items: dotfiles)) }
-            if !folders.isEmpty { cats.append(CategoryInfo(name: "Folders & Repos", items: folders)) }
+            if !folders.isEmpty  { cats.append(CategoryInfo(name: "Folders & Repos", items: folders)) }
             categories = cats
             checkedPaths = initialChecked
-            // In restore mode, expand all categories so the user sees what will be restored.
-            expandedCategories = Set(cats.map(\.name))
+            expandedCategories = Set(cats.map(\.name))  // expanded by default in restore mode
 
             let brewPath = snapshotURL.appendingPathComponent("_environment/Brewfile").path
             hasBrewfile = FileManager.default.fileExists(atPath: brewPath)
@@ -110,10 +97,10 @@ final class TreeSelectionModel: ObservableObject {
     // MARK: - Queries
 
     func checkState(for category: CategoryInfo) -> CheckState {
-        let allPaths = category.items.flatMap(\.paths)
-        let count = allPaths.filter { checkedPaths.contains($0) }.count
-        if count == 0 { return .off }
-        if count == allPaths.count { return .on }
+        let all = category.items.flatMap(\.paths)
+        let n = all.filter { checkedPaths.contains($0) }.count
+        if n == 0 { return .off }
+        if n == all.count { return .on }
         return .mixed
     }
 
@@ -134,32 +121,18 @@ final class TreeSelectionModel: ObservableObject {
     // MARK: - Mutations
 
     func toggleCategory(_ category: CategoryInfo) {
-        let allPaths = category.items.flatMap(\.paths)
-        if checkState(for: category) == .on {
-            allPaths.forEach { checkedPaths.remove($0) }
-        } else {
-            allPaths.forEach { checkedPaths.insert($0) }
-        }
+        let all = category.items.flatMap(\.paths)
+        if checkState(for: category) == .on { all.forEach { checkedPaths.remove($0) } }
+        else                               { all.forEach { checkedPaths.insert($0) } }
     }
 
     func toggleItem(_ item: ItemInfo) {
-        if isItemChecked(item) {
-            item.paths.forEach { checkedPaths.remove($0) }
-        } else {
-            item.paths.forEach { checkedPaths.insert($0) }
-        }
+        if isItemChecked(item) { item.paths.forEach { checkedPaths.remove($0) } }
+        else                   { item.paths.forEach { checkedPaths.insert($0) } }
     }
 
-    func toggleExpansion(_ category: CategoryInfo) {
-        if expandedCategories.contains(category.name) {
-            expandedCategories.remove(category.name)
-        } else {
-            expandedCategories.insert(category.name)
-        }
-    }
-
-    func selectAll()     { categories.flatMap(\.items).flatMap(\.paths).forEach { checkedPaths.insert($0) } }
-    func selectNone()    { checkedPaths.removeAll() }
+    func selectAll()    { categories.flatMap(\.items).flatMap(\.paths).forEach { checkedPaths.insert($0) } }
+    func selectNone()   { checkedPaths.removeAll() }
     func selectNewOnly() {
         checkedPaths.removeAll()
         for item in categories.flatMap(\.items) where !item.isConflict {
@@ -168,37 +141,41 @@ final class TreeSelectionModel: ObservableObject {
     }
 }
 
-// MARK: - Tri-state Checkbox
+// MARK: - Native tri-state checkbox via NSViewRepresentable
 
-/// Tri-state checkbox using SF Symbols. Tapping always calls `action`; the parent
-/// decides what "mixed → on" or "on → off" means.
-struct TriStateCheckbox: View {
+/// Wraps NSButton with allowsMixedState = true for proper indeterminate (dash) visual.
+struct IndeterminateCheckbox: NSViewRepresentable {
     let state: CheckState
     let action: () -> Void
 
-    var body: some View {
-        Button(action: action) {
-            Group {
-                switch state {
-                case .on:
-                    Image(systemName: "checkmark.square.fill")
-                        .foregroundColor(.accentColor)
-                case .off:
-                    Image(systemName: "square")
-                        .foregroundColor(Color(.tertiaryLabelColor))
-                case .mixed:
-                    Image(systemName: "minus.square.fill")
-                        .foregroundColor(.accentColor)
-                }
-            }
-            .imageScale(.medium)
+    func makeNSView(context: Context) -> NSButton {
+        let btn = NSButton()
+        btn.setButtonType(.switch)
+        btn.allowsMixedState = true
+        btn.title = ""
+        btn.target = context.coordinator
+        btn.action = #selector(Coordinator.clicked)
+        return btn
+    }
+
+    func updateNSView(_ btn: NSButton, context: Context) {
+        switch state {
+        case .on:    btn.state = .on
+        case .off:   btn.state = .off
+        case .mixed: btn.state = .mixed
         }
-        .buttonStyle(.plain)
-        .frame(width: 18, height: 18)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    class Coordinator: NSObject {
+        let action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func clicked() { action() }
     }
 }
 
-// MARK: - Category Header Row
+// MARK: - Category header (DisclosureGroup label)
 
 struct CategoryHeaderRow: View {
     let category: CategoryInfo
@@ -206,46 +183,44 @@ struct CategoryHeaderRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // Tri-state checkbox — tap handled here, NOT propagated to the expand button.
-            TriStateCheckbox(state: model.checkState(for: category)) {
+            // Tri-state checkbox — intercepted, doesn't propagate to DisclosureGroup toggle
+            IndeterminateCheckbox(state: model.checkState(for: category)) {
                 model.toggleCategory(category)
             }
+            .frame(width: 14, height: 14)
 
-            // Name + count + chevron — tapping this area expands/collapses.
-            HStack(spacing: 4) {
-                Text(category.name.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.secondary)
-                Text("(\(category.items.count))")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color(.tertiaryLabelColor))
-                Spacer(minLength: 4)
-                Image(systemName: model.isCategoryExpanded(category) ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(Color(.tertiaryLabelColor))
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    model.toggleExpansion(category)
+            Text(category.name.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(.secondary)
+
+            Text("(\(category.items.count))")
+                .font(.system(size: 10))
+                .foregroundColor(Color(.tertiaryLabelColor))
+
+            Spacer()
+
+            // Show count badge when collapsed
+            if !model.isCategoryExpanded(category) {
+                let n = category.items.filter { model.isItemChecked($0) }.count
+                if n > 0 {
+                    Text("\(n) selezionati")
+                        .font(.system(size: 10))
+                        .foregroundColor(.accentColor)
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color(.windowBackgroundColor).opacity(0.6))
+        .padding(.vertical, 1)
     }
 }
 
-// MARK: - Item Row
+// MARK: - Item row
 
 struct ItemRow: View {
     let item: ItemInfo
     @ObservedObject var model: TreeSelectionModel
 
     var body: some View {
-        HStack(spacing: 6) {
-            // Native macOS checkbox via Toggle + .checkboxStyle
+        HStack(spacing: 8) {
             Toggle(isOn: Binding(
                 get: { model.isItemChecked(item) },
                 set: { _ in model.toggleItem(item) }
@@ -256,7 +231,6 @@ struct ItemRow: View {
             Text(item.label)
                 .font(.system(size: 12))
                 .lineLimit(1)
-                .truncationMode(.tail)
 
             Spacer(minLength: 4)
 
@@ -264,21 +238,15 @@ struct ItemRow: View {
                 Text("sensitive")
                     .font(.system(size: 9))
                     .foregroundColor(.orange)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.orange.opacity(0.6), lineWidth: 0.5))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .overlay(RoundedRectangle(cornerRadius: 3)
+                        .stroke(Color.orange.opacity(0.5), lineWidth: 0.5))
             }
 
             if case .restore = model.mode {
-                if item.isConflict {
-                    Text("overwrite")
-                        .font(.system(size: 9))
-                        .foregroundColor(.mlRosso)
-                } else {
-                    Text("new")
-                        .font(.system(size: 9))
-                        .foregroundColor(.mlVerde)
-                }
+                Text(item.isConflict ? "overwrite" : "new")
+                    .font(.system(size: 9))
+                    .foregroundColor(item.isConflict ? .mlRosso : .mlVerde)
             }
 
             Text(shortPath(item.primaryPath))
@@ -286,17 +254,12 @@ struct ItemRow: View {
                 .foregroundColor(Color(.tertiaryLabelColor))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: 160, alignment: .trailing)
+                .frame(maxWidth: 180, alignment: .trailing)
         }
-        .padding(.leading, 28)
-        .padding(.trailing, 10)
-        .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .onTapGesture { model.toggleItem(item) }
     }
 
-    private func shortPath(_ path: String) -> String {
-        path.count > 34 ? "…" + String(path.suffix(32)) : path
+    private func shortPath(_ p: String) -> String {
+        p.count > 34 ? "…" + String(p.suffix(32)) : p
     }
 }
 
@@ -310,7 +273,28 @@ struct TreeView: View {
         VStack(spacing: 0) {
             toolbarRow
             Divider()
-            treeContent
+
+            List {
+                ForEach(model.categories) { category in
+                    DisclosureGroup(
+                        isExpanded: Binding(
+                            get: { model.isCategoryExpanded(category) },
+                            set: { open in
+                                if open { model.expandedCategories.insert(category.name) }
+                                else    { model.expandedCategories.remove(category.name)  }
+                            }
+                        )
+                    ) {
+                        ForEach(category.items) { item in
+                            ItemRow(item: item, model: model)
+                        }
+                    } label: {
+                        CategoryHeaderRow(category: category, model: model)
+                    }
+                }
+            }
+            .listStyle(.inset)
+
             if model.hasBrewfile {
                 Divider()
                 Toggle("Reinstall Homebrew packages from Brewfile", isOn: $model.brewInstall)
@@ -319,18 +303,18 @@ struct TreeView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
             }
+
             Divider()
             bottomBar
         }
         .frame(minWidth: 500, minHeight: 520)
-        .alert("Overwrite existing files?", isPresented: $showOverwriteAlert) {
-            Button("Overwrite & Restore", role: .destructive) { confirmRestore() }
-            Button("Cancel", role: .cancel) { }
+        .alert("Sovrascrivere i file esistenti?", isPresented: $showOverwriteAlert) {
+            Button("Sovrascrivi e Ripristina", role: .destructive) { confirmRestore() }
+            Button("Annulla", role: .cancel) { }
         } message: {
             let n = model.categories.flatMap(\.items)
                 .filter { model.isItemChecked($0) && $0.isConflict }.count
-            Text("You selected \(n) item(s) that already exist at their destination. " +
-                 "Originals will be saved to ~/.rustybackup-pre-restore/ before overwriting.")
+            Text("Hai selezionato \(n) elemento/i già presenti. Gli originali saranno salvati in ~/.rustybackup-pre-restore/")
         }
     }
 
@@ -338,58 +322,31 @@ struct TreeView: View {
 
     private var toolbarRow: some View {
         HStack(spacing: 12) {
-            Text(model.mode.isBackup ? "Select what to back up" : "Select what to restore")
+            Text(model.mode.isBackup ? "Seleziona cosa includere nel backup" : "Seleziona cosa ripristinare")
                 .font(.headline)
                 .foregroundColor(model.mode.isBackup ? .mlInfo : .mlVerde)
-
             Spacer()
-
-            Button("All")  { model.selectAll() }  .buttonStyle(.plain).font(.callout)
-            Button("None") { model.selectNone() } .buttonStyle(.plain).font(.callout)
+            Button("Tutti")   { model.selectAll()     }.buttonStyle(.plain).font(.callout)
+            Button("Nessuno") { model.selectNone()    }.buttonStyle(.plain).font(.callout)
             if !model.mode.isBackup {
-                Button("New Only") { model.selectNewOnly() } .buttonStyle(.plain).font(.callout)
+                Button("Solo nuovi") { model.selectNewOnly() }.buttonStyle(.plain).font(.callout)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
     }
 
-    // MARK: - Tree
-
-    private var treeContent: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(model.categories) { category in
-                    // Category header
-                    CategoryHeaderRow(category: category, model: model)
-
-                    // Expanded items
-                    if model.isCategoryExpanded(category) {
-                        ForEach(category.items) { item in
-                            ItemRow(item: item, model: model)
-                        }
-                        Divider().padding(.leading, 10)
-                    }
-                }
-            }
-        }
-        .background(Color(.textBackgroundColor))
-    }
-
     // MARK: - Bottom Bar
 
     private var bottomBar: some View {
         HStack(spacing: 12) {
-            Text("\(model.selectedItemCount) items selected")
+            Text("\(model.selectedItemCount) elementi selezionati")
                 .font(.caption)
                 .foregroundColor(.secondary)
-
             Spacer()
-
-            Button("Cancel") { model.onCancel?() }
+            Button("Annulla") { model.onCancel?() }
                 .keyboardShortcut(.cancelAction)
-
-            Button(model.mode.isBackup ? "Start Backup" : "Restore Selected") {
+            Button(model.mode.isBackup ? "Avvia Backup" : "Ripristina Selezionati") {
                 handleConfirm()
             }
             .keyboardShortcut(.defaultAction)
@@ -407,23 +364,21 @@ struct TreeView: View {
         switch model.mode {
         case .backup:
             model.onConfirmBackup?(model.selectedPaths)
-
         case .restore(_):
-            let conflictsSelected = model.categories.flatMap(\.items)
+            let conflicts = model.categories.flatMap(\.items)
                 .filter { model.isItemChecked($0) && $0.isConflict }
-            if conflictsSelected.isEmpty {
-                confirmRestore()
-            } else {
-                showOverwriteAlert = true
-            }
+            if conflicts.isEmpty { confirmRestore() }
+            else { showOverwriteAlert = true }
         }
     }
 
     private func confirmRestore() {
         guard case .restore(let url) = model.mode else { return }
         let items = model.categories.flatMap(\.items)
-            .filter { model.isItemChecked($0) }
-            .flatMap(\.paths)
+            .filter { model.isItemChecked($0) }.flatMap(\.paths)
         model.onConfirmRestore?(url, items, model.brewInstall)
     }
 }
+
+
+/// Flat data model for an item in the tree.
