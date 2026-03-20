@@ -71,11 +71,13 @@ enum BackupEngine {
         let excludeFilter = ExcludeFilter(patterns: config.exclude.patterns)
         let sourceURLs = allPaths.map { URL(fileURLWithPath: $0) }
 
-        let discoveredCount = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
-        discoveredCount.initialize(to: 0)
-        let walkerDone = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
-        walkerDone.initialize(to: false)
-        defer { discoveredCount.deallocate(); walkerDone.deallocate() }
+        // Use a class (heap ref) instead of UnsafeMutablePointer — ARC keeps it alive
+        // for as long as the walkerTask closure references it, preventing use-after-free.
+        final class Counters: @unchecked Sendable {
+            var discovered: Int64 = 0
+            var walkerDone: Bool = false
+        }
+        let counters = Counters()
 
         let (stream, continuation) = AsyncStream<FileEntry>.makeStream(bufferingPolicy: .bufferingNewest(256))
 
@@ -83,11 +85,11 @@ enum BackupEngine {
             FileScanner.walk(sources: sourceURLs, basePaths: allPaths,
                            excludeFilter: excludeFilter) { entry in
                 if shouldCancel { return false }
-                OSAtomicIncrement64(discoveredCount)
+                counters.discovered += 1
                 continuation.yield(entry)
                 return true
             }
-            walkerDone.pointee = true
+            counters.walkerDone = true
             continuation.finish()
         }
 
@@ -137,10 +139,10 @@ enum BackupEngine {
             // Status update
             if processedCount % UInt64(STATUS_UPDATE_INTERVAL) == 0 {
                 let elapsed = Date().timeIntervalSince(startTime)
-                let discovered = UInt64(discoveredCount.pointee)
+                let discovered = UInt64(counters.discovered)
                 let done = processedCount
                 status.filesDone = done
-                status.filesTotal = walkerDone.pointee ? discovered : discovered + 5000
+                status.filesTotal = counters.walkerDone ? discovered : discovered + 5000
                 status.bytesCopied = stats.bytesCopied
                 status.bytesPerSec = elapsed > 0 ? UInt64(Double(stats.bytesCopied) / elapsed) : 0
                 if status.bytesPerSec > 0 && done > 0 {
