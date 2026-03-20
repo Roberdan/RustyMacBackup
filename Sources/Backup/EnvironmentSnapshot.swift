@@ -22,6 +22,17 @@ enum EnvironmentSnapshot {
         captureAppList(to: envDir)
         copyAppBinary(to: envDir)
         generateRestoreScript(to: envDir)
+
+        // Also copy app to backup ROOT (one level up) so it's visible when you plug in the disk
+        let backupRoot = destURL.deletingLastPathComponent()
+        let rootApp = backupRoot.appendingPathComponent("RustyMacBackup.app")
+        if let appURL = findAppBundle() {
+            // Only copy if not already there or newer
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: rootApp.path) {
+                try? fm.copyItem(at: appURL, to: rootApp)
+            }
+        }
     }
 
     /// Write machine identity to snapshot root as metadata.json
@@ -123,21 +134,23 @@ enum EnvironmentSnapshot {
                           atomically: true, encoding: .utf8)
     }
 
-    private static func copyAppBinary(to dir: URL) {
-        // Find the .app bundle -- try Bundle.main first, then walk up from executable
-        var bundleURL: URL?
+    static func findAppBundle() -> URL? {
         let mainPath = Bundle.main.bundlePath
         if mainPath.hasSuffix(".app") {
-            bundleURL = URL(fileURLWithPath: mainPath)
-        } else if let execPath = Bundle.main.executablePath {
-            // Walk up: .../RustyMacBackup.app/Contents/MacOS/RustyMacBackup -> .app
+            return URL(fileURLWithPath: mainPath)
+        }
+        if let execPath = Bundle.main.executablePath {
             var url = URL(fileURLWithPath: execPath)
             for _ in 0..<4 {
                 url = url.deletingLastPathComponent()
-                if url.path.hasSuffix(".app") { bundleURL = url; break }
+                if url.path.hasSuffix(".app") { return url }
             }
         }
-        guard let appURL = bundleURL,
+        return nil
+    }
+
+    private static func copyAppBinary(to dir: URL) {
+        guard let appURL = findAppBundle(),
               FileManager.default.fileExists(atPath: appURL.path) else { return }
         let destApp = dir.appendingPathComponent("RustyMacBackup.app")
         try? FileManager.default.removeItem(at: destApp)
