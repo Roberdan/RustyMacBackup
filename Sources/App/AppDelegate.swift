@@ -37,7 +37,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
             config = try? Config.load(from: Config.defaultPath)
         }
 
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // Only request notifications when running as a proper .app bundle
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
 
         let ws = NSWorkspace.shared
         ws.notificationCenter.addObserver(self, selector: #selector(volumeChanged),
@@ -253,6 +256,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, PopoverDelegate {
     // MARK: - Helpers
 
     private func sendNotification(title: String, body: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
