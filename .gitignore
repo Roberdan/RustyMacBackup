@@ -3,3 +3,6 @@
 build/
 *.pkg
 ~/
+
+# Build artifacts (also produced by build-pkg.sh)
+*.app.zip

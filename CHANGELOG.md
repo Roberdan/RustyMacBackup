@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.4.0] - 2026-08-25
+
+### Added
+- **Version in the popover header** — read from the running bundle rather than written as a
+  literal, so what the UI claims and what is installed cannot disagree. A `swiftc` build with
+  no bundle shows `dev`, which is the truthful answer there.
+
+### Fixed
+- **Popover stayed open when clicking another app** — `behavior = .transient` was already set,
+  but this is an `LSUIElement` agent that never becomes active, so a click belonging to a
+  *different* application is never delivered to it and the popover simply hovered over whatever
+  the user had moved on to. A global mouse-down monitor, installed while the popover is shown
+  and removed in `popoverDidClose`, sees exactly the events `.transient` cannot. Clicks inside
+  the popover are still `.transient`'s job, which is why the monitor is global and not local.
+
 ## [2.3.0] - 2026-08-25
 
 ### Added

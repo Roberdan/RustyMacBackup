@@ -14,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var iconManager: IconManager!
     private var pollTimer: Timer?
     private let popover = NSPopover()
+    private var outsideClickMonitor: Any?
     private var uiState: AppUIState!
     private var popoverVC: PopoverViewController!
     private var treeWindowController: TreeWindowController?
@@ -44,6 +45,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = popoverVC
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
 
         statusItem.button?.action = #selector(togglePopover)
         statusItem.button?.target = self
@@ -172,6 +174,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if let button = statusItem.button {
             pollStatus()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            watchForOutsideClick()
+        }
+    }
+
+    /// `.transient` dismisses the popover on a click the app itself receives, but this is an
+    /// `LSUIElement` agent that never becomes active, so a click in *another* app is never
+    /// delivered and the popover just stays there — floating over whatever the user moved on
+    /// to. A global monitor sees exactly the events `.transient` cannot: those belonging to
+    /// other applications. Clicks inside our own popover stay with `.transient`, which is why
+    /// this is a global and not a local monitor.
+    private func watchForOutsideClick() {
+        guard outsideClickMonitor == nil else { return }
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.popover.isShown else { return }
+                self.popover.performClose(nil)
+            }
+        }
+    }
+
+    /// Paired with `watchForOutsideClick`. Hooked to `popoverDidClose` rather than to each
+    /// call site because the popover is closed from a dozen action handlers, and a monitor
+    /// left installed keeps observing every click on the machine for nothing.
+    private func stopWatchingForOutsideClick() {
+        if let monitor = outsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            outsideClickMonitor = nil
         }
     }
 
@@ -502,5 +533,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+}
+
+// MARK: - NSPopoverDelegate
+
+extension AppDelegate: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        stopWatchingForOutsideClick()
     }
 }

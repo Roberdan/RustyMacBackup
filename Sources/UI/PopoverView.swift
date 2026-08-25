@@ -182,6 +182,13 @@ struct PopoverView: View {
 
     // MARK: - Header
 
+    /// Reads the running bundle rather than a literal, so it can never disagree with the
+    /// app it is printed on. A `swiftc` build with no bundle shows "dev", which is the
+    /// honest answer there.
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    }
+
     private var headerSection: some View {
         HStack(spacing: 8) {
             Circle()
@@ -190,6 +197,10 @@ struct PopoverView: View {
                 .accessibilityLabel("Stato: \(statusText)")  // F-16: non solo colore
             Text("RustyMacBackup")
                 .font(.headline)
+            Text("v\(appVersion)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .accessibilityLabel("Versione \(appVersion)")
             Spacer()
             if !statusBadge.isEmpty {
                 Text(statusBadge)
