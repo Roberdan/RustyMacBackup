@@ -5,11 +5,16 @@ struct BackupStats {
     var filesCopied: UInt64 = 0
     var dirsCreated: UInt64 = 0
     var bytesCopied: UInt64 = 0
+    var filesSkipped: UInt64 = 0
 }
 
 enum FileResult {
     case hardlinked
     case copied(bytes: UInt64)
+    /// Deliberately not copied. A skip is a decision, not a failure, so it is kept apart from
+    /// `.error` — but it still carries the path and the reason, because a file missing from
+    /// the backup must always be explainable.
+    case skipped(path: String, reason: String)
     case error(path: String, error: Error)
 }
 
@@ -52,6 +57,7 @@ extension BackupStatusFile {
         bytesPerSec = 0
         etaSecs = 0
         errors = 0
+        filesSkipped = 0
         currentFile = ""
     }
 }

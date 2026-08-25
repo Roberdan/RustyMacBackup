@@ -163,7 +163,38 @@ hourly  = 24    # keep last 24 hourly snapshots
 daily   = 30    # keep last 30 daily snapshots
 weekly  = 52    # keep last 52 weekly snapshots
 monthly = 0     # keep forever
+
+[dlp]
+skip_unlabeled_office   = true   # don't attempt copies endpoint DLP will veto
+skip_when_label_unknown = true   # legacy .doc/.xls/.ppt too (label unreadable)
 ```
+
+### Endpoint DLP (managed Macs)
+
+On a Mac managed with Microsoft Purview, a common policy blocks **copying unlabeled Office
+files to removable media**. The endpoint agent vetoes the write itself: `copyfile()` returns
+`EPERM` and macOS raises a modal "Data Loss Prevention" dialog asking for a business
+justification. On an unattended hourly backup nobody is there to answer it, the file is not
+copied anyway, and the error looks like a permission problem it is not — no amount of Full
+Disk Access fixes it.
+
+RustyMacBackup therefore decides *before* the copy. A file is skipped only when all three are
+true: the destination is removable media, the file is an Office document, and it carries no
+Microsoft Information Protection sensitivity label (read from `docProps/custom.xml` inside the
+OOXML package).
+
+Two properties are deliberate:
+
+- **Hard links win.** The check runs *after* the hard-link attempt, because DLP vetoes the
+  copy, not the link. A file already in the previous snapshot is linked inside the destination
+  volume and stays in the backup chain — switching the guard on never evicts what is already
+  backed up.
+- **A skip is never silent.** Skipped files are counted in `status.json` (`files_skipped`) and
+  named in `errors.json` under `dlp_skipped`, separate from real errors. "Not in the backup" is
+  always something the report says out loud.
+
+To include a file, give it a sensitivity label in Office. To turn the behaviour off entirely,
+set `skip_unlabeled_office = false` — and expect the dialog.
 
 ---
 

@@ -14,6 +14,8 @@ struct TestRunner {
         let config = ConfigParserTests()
         let backup = BackupEngineTests()
         let hardLinker = HardLinkerTests()
+        let dlp = DLPGuardTests()
+        let scanner = FileScannerTests()
 
         let suites: [(String, TestClosure)] = [
             ("ExcludeFilter.wildcardStar", exclude.test_wildcardStar),
@@ -40,7 +42,19 @@ struct TestRunner {
             ("HardLinker.sameFile", hardLinker.test_sameFileSameSizeMtime),
             ("HardLinker.diffSize", hardLinker.test_differentSize),
             ("HardLinker.hardLink", hardLinker.test_hardLinkCreation),
-            ("HardLinker.copyFile", hardLinker.test_copyFileCreation)
+            ("HardLinker.copyFile", hardLinker.test_copyFileCreation),
+            ("DLPGuard.officeExtensions", dlp.test_officeExtensionsRecognised),
+            ("DLPGuard.nonOfficeNeverSkipped", dlp.test_nonOfficeFilesAreNeverSkipped),
+            ("DLPGuard.unlabeledSkipped", dlp.test_unlabeledOfficeFileIsSkipped),
+            ("DLPGuard.labeledCopied", dlp.test_labeledOfficeFileIsCopied),
+            ("DLPGuard.legacyUnknown", dlp.test_legacyBinaryFormatIsUnknown),
+            ("DLPGuard.inactiveSkipsNothing", dlp.test_inactiveGuardSkipsNothing),
+            ("DLPGuard.internalDestination", dlp.test_internalDestinationDoesNotActivateGuard),
+            ("DLPGuard.hardLinkWins", dlp.test_hardLinkWinsOverDLPSkip),
+            ("DLPGuard.skipsReported", dlp.test_skipsAreReportedInTheirOwnCategory),
+            ("FileScanner.excludedFileKeepsSibling", scanner.test_excludedFileDoesNotSwallowSiblingDirectory),
+            ("FileScanner.excludedDirPruned", scanner.test_excludedDirectoryIsStillPruned),
+            ("FileScanner.multipleExcludedFiles", scanner.test_multipleExcludedFilesBeforeDirectory)
         ]
 
         print("🧪 Running RustyMacBackup tests (\(suites.count) total)...")

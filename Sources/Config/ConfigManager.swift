@@ -5,6 +5,7 @@ struct Config {
     var destination: DestinationConfig
     var exclude: ExcludeConfig
     var retention: RetentionConfig
+    var dlp: DLPConfig = DLPConfig()
 
     static var defaultPath: URL {
         URL(fileURLWithPath: ("~/.config/rusty-mac-backup/config.toml" as NSString).expandingTildeInPath)
@@ -42,6 +43,10 @@ struct Config {
         out.append("daily = \(retention.daily)")
         out.append("weekly = \(retention.weekly)")
         out.append("monthly = \(retention.monthly)")
+        out.append("")
+        out.append("[dlp]")
+        out.append("skip_unlabeled_office = \(dlp.skipUnlabeledOfficeFiles)")
+        out.append("skip_when_label_unknown = \(dlp.skipWhenLabelUnknown)")
         out.append("")
 
         let data = out.joined(separator: "\n").data(using: .utf8)!
@@ -103,6 +108,8 @@ struct Config {
 
             if let str = parseQuotedString(value) {
                 assign(section: currentSection, key: key, stringValue: str, to: &config)
+            } else if let boolValue = parseBool(value) {
+                assign(section: currentSection, key: key, boolValue: boolValue, to: &config)
             } else if let intValue = UInt32(value) {
                 assign(section: currentSection, key: key, intValue: intValue, to: &config)
             }
@@ -136,12 +143,27 @@ struct Config {
         }
     }
 
-    private static func assign(section: String, key: String, values: [String], to config: inout Config) {
-        switch "\(section).\(key)" {
+    private static func assign(section: String, key: String, values: [String], to config: inout Config) {        switch "\(section).\(key)" {
         case "source.paths": config.source.paths = values
         case "source.extra_paths": config.source.legacyExtraPaths = values
         case "exclude.patterns": config.exclude.patterns = values
         default: break
+        }
+    }
+
+    private static func assign(section: String, key: String, boolValue: Bool, to config: inout Config) {
+        switch "\(section).\(key)" {
+        case "dlp.skip_unlabeled_office": config.dlp.skipUnlabeledOfficeFiles = boolValue
+        case "dlp.skip_when_label_unknown": config.dlp.skipWhenLabelUnknown = boolValue
+        default: break
+        }
+    }
+
+    private static func parseBool(_ value: String) -> Bool? {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true": return true
+        case "false": return false
+        default: return nil
         }
     }
 
@@ -219,6 +241,16 @@ struct RetentionConfig {
     var daily: UInt32 = 30
     var weekly: UInt32 = 52
     var monthly: UInt32 = 0
+}
+
+/// Endpoint DLP behaviour. Defaults on, because the alternative — attempting a copy the
+/// Purview agent vetoes — raises a modal justification dialog during an unattended hourly
+/// backup and still does not copy the file.
+struct DLPConfig {
+    var skipUnlabeledOfficeFiles: Bool = true
+    /// Office formats whose label cannot be read (legacy .doc/.xls/.ppt) are skipped too.
+    /// Set false to attempt them anyway and accept the possible prompt.
+    var skipWhenLabelUnknown: Bool = true
 }
 
 func generateDefaultConfig(backupPath: String) -> Config {

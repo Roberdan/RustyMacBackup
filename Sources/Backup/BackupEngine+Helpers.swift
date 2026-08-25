@@ -102,7 +102,8 @@ extension BackupEngine {
         return "\(bytes) B"
     }
 
-    static func processFile(entry: FileEntry, destFile: String, prevFile: String?) async -> FileResult {
+    static func processFile(entry: FileEntry, destFile: String, prevFile: String?,
+                            dlpGuard: DLPGuard = DLPGuard(isActive: false)) async -> FileResult {
         let fm = FileManager.default
         let destDir = URL(fileURLWithPath: destFile).deletingLastPathComponent().path
         if !fm.fileExists(atPath: destDir) {
@@ -122,6 +123,16 @@ extension BackupEngine {
             }
         }
 
+        // Pre-flight, and deliberately AFTER the hard-link attempt: endpoint DLP vetoes the
+        // COPY, not the link. A file already present in the previous snapshot is linked
+        // within the destination volume without any content crossing the boundary, so it
+        // stays in the backup chain. Only a copy that DLP would refuse is skipped — attempting
+        // it is what raises the modal justification dialog on an unattended hourly run, and
+        // the file would not have been copied anyway.
+        if let reason = dlpGuard.skipReason(forFileAt: entry.absolutePath) {
+            return .skipped(path: entry.relativePath, reason: reason)
+        }
+
         // Fall back to copyfile with APFS clone support
         do {
             try HardLinker.copyFile(from: entry.absolutePath, to: destFile)
@@ -133,13 +144,17 @@ extension BackupEngine {
     }
 
     static func processResult(_ result: FileResult, stats: inout BackupStats,
-                               errors: inout [(path: String, error: Error)]) {
+                               errors: inout [(path: String, error: Error)],
+                               skips: inout [(path: String, reason: String)]) {
         switch result {
         case .hardlinked:
             stats.filesHardlinked += 1
         case .copied(let bytes):
             stats.filesCopied += 1
             stats.bytesCopied += bytes
+        case .skipped(let path, let reason):
+            stats.filesSkipped += 1
+            skips.append((path: path, reason: reason))
         case .error(let path, let err):
             errors.append((path: path, error: err))
         }

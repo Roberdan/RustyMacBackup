@@ -12,6 +12,7 @@ struct BackupStatusFile: Codable {
     var bytesPerSec: UInt64
     var etaSecs: UInt64
     var errors: UInt64
+    var filesSkipped: UInt64
     var currentFile: String
 
     enum CodingKeys: String, CodingKey {
@@ -26,6 +27,7 @@ struct BackupStatusFile: Codable {
         case bytesPerSec = "bytes_per_sec"
         case etaSecs = "eta_secs"
         case errors
+        case filesSkipped = "files_skipped"
         case currentFile = "current_file"
     }
 
@@ -34,12 +36,14 @@ struct BackupStatusFile: Codable {
          lastDurationSecs: Double = 0,
          filesTotal: UInt64 = 0, filesDone: UInt64 = 0,
          bytesCopied: UInt64 = 0, bytesPerSec: UInt64 = 0,
-         etaSecs: UInt64 = 0, errors: UInt64 = 0, currentFile: String = "") {
+         etaSecs: UInt64 = 0, errors: UInt64 = 0,
+         filesSkipped: UInt64 = 0, currentFile: String = "") {
         self.state = state; self.phase = phase; self.startedAt = startedAt
         self.lastCompleted = lastCompleted; self.lastDurationSecs = lastDurationSecs
         self.filesTotal = filesTotal; self.filesDone = filesDone
         self.bytesCopied = bytesCopied; self.bytesPerSec = bytesPerSec
-        self.etaSecs = etaSecs; self.errors = errors; self.currentFile = currentFile
+        self.etaSecs = etaSecs; self.errors = errors
+        self.filesSkipped = filesSkipped; self.currentFile = currentFile
     }
 }
 

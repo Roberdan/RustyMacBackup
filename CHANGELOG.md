@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.3.0] - 2026-08-25
+
+### Added
+- **Endpoint DLP guard** — on a Mac managed with Microsoft Purview, copying an *unlabeled*
+  Office file to removable media is vetoed by the endpoint agent: `copyfile()` returns `EPERM`
+  and macOS raises a modal justification dialog. During an unattended hourly backup nobody
+  answers it and the file is never copied. `DLPGuard` now decides before the copy is attempted,
+  so the dialog never appears. A file is skipped only when the destination is removable media,
+  the file is an Office document, *and* it carries no MIP sensitivity label (read from
+  `docProps/custom.xml` in the OOXML package).
+- **`[dlp]` config section** — `skip_unlabeled_office` and `skip_when_label_unknown`, both
+  defaulting to true. The TOML parser now understands booleans at all, which it previously did
+  not.
+- **`dlp_skipped` report category** — skipped files are counted in `status.json`
+  (`files_skipped`) and named in `errors.json`, kept apart from real errors so a skip never
+  inflates the error total. A file absent from the backup is always explainable.
+
+### Fixed
+- **Silent subtree loss in the scanner** — `FileScanner` called `enumerator.skipDescendants()`
+  for every entry matching an exclude pattern, *files included*. `skipDescendants()` skips the
+  subdirectory the enumerator is about to descend into, so an excluded file sitting immediately
+  before a real directory swallowed that entire subtree. Nothing failed and nothing was logged:
+  the files were simply absent from every snapshot. A single stray `.DS_Store` was enough — on
+  this machine it cost `FDE_Update/zzArchive/` (6 files) and
+  `the-standing-egg/docs/archive/exports/` (4 files), and any `*.log`, `*.tmp`, `*.pyc` or
+  `*.jsonl` in the wrong position would do the same. `skipDescendants()` is now called only for
+  directories.
+- **Misleading advice on DLP failures** — these surfaced as `permission_denied`, whose
+  suggested action is "check Full Disk Access". No local setting fixes a Purview policy, so
+  the operator was sent chasing a fix that does not exist.
+- **`files_skipped` never reported** — the field was written to `status.json` but never
+  assigned, so it always read 0 while `errors.json` listed skipped files.
+
+### Notes
+- The DLP check runs **after** the hard-link attempt, not before. DLP vetoes the copy, not the
+  link, so a file already present in the previous snapshot is still linked into the new one and
+  stays in the backup chain. Enabling the guard never evicts what is already backed up.
+
 ## [2.2.0] - 2026-03-20
 
 ### Fixed

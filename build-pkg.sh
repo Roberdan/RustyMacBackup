@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="${VERSION:-2.2.0}"
+VERSION="${VERSION:-2.3.0}"
 APP_NAME="RustyMacBackup"
 PKG_ID="com.roberdan.rusty-mac-backup"
 

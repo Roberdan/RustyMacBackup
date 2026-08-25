@@ -24,7 +24,7 @@ enum FileScanner {
         onTraversalError: ((String, Error) -> Void)? = nil,
         handler: (FileEntry) -> Bool
     ) {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey,
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey,
                                        .fileSizeKey, .contentModificationDateKey]
         let keySet = Set(keys)
 
@@ -86,19 +86,26 @@ enum FileScanner {
                     continue
                 }
 
+                guard let values = try? url.resourceValues(forKeys: keySet) else { continue }
+                let isDirectory = values.isDirectory == true
+
+                // `skipDescendants()` must only ever be called for a directory. Calling it
+                // after a FILE skips the next subdirectory the enumerator was about to
+                // descend into — and the whole subtree vanishes from the backup without a
+                // single error. An excluded file sitting next to a real directory (a
+                // `.DS_Store` before `zzArchive/`, a `*.log` before a source folder) was
+                // enough to silently drop everything inside it.
                 if excludeFilter.shouldSkipDirectory(relativePath: relativePath) {
-                    enumerator.skipDescendants()
+                    if isDirectory { enumerator.skipDescendants() }
                     continue
                 }
                 if excludeFilter.isExcluded(relativePath: relativePath) {
                     continue
                 }
 
-                guard let values = try? url.resourceValues(forKeys: keySet) else { continue }
-
                 // Skip symbolic links entirely
                 if values.isSymbolicLink == true {
-                    enumerator.skipDescendants()
+                    if isDirectory { enumerator.skipDescendants() }
                     continue
                 }
 

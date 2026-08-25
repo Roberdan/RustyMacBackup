@@ -106,14 +106,22 @@ enum BackupEngine {
 
         var stats = BackupStats()
         var errorList: [(path: String, error: Error)] = []
+        var skipList: [(path: String, reason: String)] = []
         var processedCount: UInt64 = 0
         var vanishedCount = 0
         let VANISHED_THRESHOLD = 3
         let maxWorkers = 8  // per spec: TaskGroup concurrency limit
 
+        let dlpGuard = DLPGuard.forDestination(destPath,
+                                               enabled: config.dlp.skipUnlabeledOfficeFiles,
+                                               skipWhenLabelUnknown: config.dlp.skipWhenLabelUnknown)
+        if dlpGuard.isActive {
+            Log.info("Endpoint DLP guard active -- unlabeled Office files will be skipped, not attempted")
+        }
+
         // Helper: post-copy checks and stats merge (called from main task only — no data races)
         func handleResult(_ result: FileResult, entry: FileEntry) {
-            processResult(result, stats: &stats, errors: &errorList)
+            processResult(result, stats: &stats, errors: &errorList, skips: &skipList)
             let isShellFile = entry.relativePath.hasSuffix("shrc") || entry.relativePath.hasSuffix("profile")
                 || entry.relativePath.hasSuffix("shenv") || entry.relativePath.hasSuffix("history")
             if !isShellFile && !FileManager.default.fileExists(atPath: entry.absolutePath) {
@@ -153,7 +161,8 @@ enum BackupEngine {
                 let prevFile = latestBackup.map { $0.appendingPathComponent(file.relativePath).path }
 
                 group.addTask {
-                    (await BackupEngine.processFile(entry: file, destFile: destFile, prevFile: prevFile), file)
+                    (await BackupEngine.processFile(entry: file, destFile: destFile,
+                                                    prevFile: prevFile, dlpGuard: dlpGuard), file)
                 }
                 inFlight += 1
 
@@ -180,6 +189,7 @@ enum BackupEngine {
                         status.etaSecs = UInt64(remaining * avgBytesPerFile / status.bytesPerSec)
                     }
                     status.errors = UInt64(errorList.count)
+                    status.filesSkipped = stats.filesSkipped
                     status.currentFile = file.relativePath
                     status.phase = stats.bytesCopied > 0 ? "copying" : "scanning"
                     try? statusWriter.write(status: status)
@@ -216,9 +226,16 @@ enum BackupEngine {
         EnvironmentSnapshot.capture(to: finalURL)
         Log.info("Environment snapshot complete")
 
-        if !errorList.isEmpty {
+        if !errorList.isEmpty || !skipList.isEmpty {
             // F-06: Use ErrorReporter for semantic keys (permission_denied, not_found, etc.)
-            try? statusWriter.writeErrors(errors: ErrorReporter.categorizeErrors(errorList))
+            // DLP skips travel in the same report: a file absent from the backup must be
+            // visible in exactly one place, whether it failed or was deliberately left out.
+            try? statusWriter.writeErrors(
+                errors: ErrorReporter.categorizeErrors(errorList, skips: skipList))
+        }
+
+        if !skipList.isEmpty {
+            Log.warn("\(skipList.count) file(s) skipped by endpoint DLP policy -- see errors.json")
         }
 
         let totalFiles = processedCount
@@ -233,6 +250,7 @@ enum BackupEngine {
         status.etaSecs = 0
         status.currentFile = ""
         status.errors = UInt64(errorList.count)
+        status.filesSkipped = stats.filesSkipped
         do { try statusWriter.write(status: status) } catch { Log.error("Status write failed at completion: \(error)") }
     }
 }
