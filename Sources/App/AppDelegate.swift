@@ -2,6 +2,11 @@ import Cocoa
 import UserNotifications
 import SwiftUI
 
+/// Main-actor isolated: every member touches AppKit or `uiState`, both of which are
+/// main-thread-only. Without the annotation the class is non-Sendable and every
+/// `Task`/`DispatchQueue.main.async` that captures `self` warns — the isolation was
+/// always real, it just wasn't declared.
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     var config: Config?
@@ -143,7 +148,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                           name: NSWorkspace.didUnmountNotification, object: nil)
 
         pollTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            self?.pollStatus()
+            // Scheduled on the main run loop, so this fires on the main thread already.
+            MainActor.assumeIsolated { self?.pollStatus() }
         }
         pollTimer?.tolerance = 5.0
         pollStatus()
@@ -433,21 +439,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let version = uiState.updateAvailable else { return }
         uiState.isUpdating = true
         uiState.updatePhase = .downloading
-        Task {
+        Task { [weak self] in
             do {
                 try await AutoUpdater.downloadAndInstall(version: version) { [weak self] phase in
                     DispatchQueue.main.async { self?.uiState.updatePhase = phase }
                 }
                 DispatchQueue.main.async {
-                    self.uiState.isUpdating = false
-                    self.uiState.updatePhase = nil
+                    self?.uiState.isUpdating = false
+                    self?.uiState.updatePhase = nil
                 }
             } catch {
                 Log.error("Update failed: \(error.localizedDescription)")
                 DispatchQueue.main.async {
-                    self.uiState.isUpdating = false
-                    self.uiState.updatePhase = nil
-                    self.sendNotification(title: "Aggiornamento fallito", body: error.localizedDescription)
+                    self?.uiState.isUpdating = false
+                    self?.uiState.updatePhase = nil
+                    self?.sendNotification(title: "Aggiornamento fallito", body: error.localizedDescription)
                 }
             }
         }
@@ -475,7 +481,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Helpers
 
-    private static func runDiskutil(_ args: [String]) -> Bool {
+    /// Deliberately off the main actor: it spawns `diskutil` and blocks until it exits,
+    /// and `handleEject` calls it from a background queue for exactly that reason.
+    nonisolated private static func runDiskutil(_ args: [String]) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
         p.arguments = args

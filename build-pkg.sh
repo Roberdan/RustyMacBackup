@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="${VERSION:-2.3.0}"
+# Single source of truth: build.sh. Duplicating the literal here is how the two
+# drift, and a .pkg labelled with the wrong version is worse than no .pkg.
+VERSION="${VERSION:-$(sed -n 's/^VERSION="${VERSION:-\(.*\)}"$/\1/p' "$(dirname "$0")/build.sh")}"
 APP_NAME="RustyMacBackup"
 PKG_ID="com.roberdan.rusty-mac-backup"
 

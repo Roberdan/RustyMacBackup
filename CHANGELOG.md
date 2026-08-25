@@ -32,6 +32,20 @@
   the operator was sent chasing a fix that does not exist.
 - **`files_skipped` never reported** — the field was written to `status.json` but never
   assigned, so it always read 0 while `errors.json` listed skipped files.
+- **Stale recovery installer on the backup disk** — `install.sh` synced the `.app` and then
+  copied "the newest `.pkg` lying around", which nothing ever rebuilt. The artifact whose
+  entire purpose is restoring the app from the backup had sat at 1.0.0 since March while the
+  installed app moved on: the one scenario it exists for would have handed back a five-month-old
+  build. `install.sh` now builds the installer it ships (`build-pkg.sh`, which produces the app
+  once and both artifacts from it), pins the copy to the version it just built rather than to a
+  glob, and removes any older `.pkg` from the disk so there are never two with no way to tell
+  which matches the `.app` beside them. `build-pkg.sh` also derives the version from `build.sh`
+  instead of repeating the literal — the same drift, one level down.
+- **Concurrency warnings in `AppDelegate`** — four `capture of 'self' with non-Sendable type`
+  warnings. `AppDelegate` touches AppKit and `uiState` throughout, both main-thread-only, so the
+  isolation was already real and simply undeclared; the class is now `@MainActor`. `runDiskutil`
+  is explicitly `nonisolated`, since `handleEject` calls it from a background queue precisely
+  because it blocks. Builds clean.
 
 ### Notes
 - The DLP check runs **after** the hard-link attempt, not before. DLP vetoes the copy, not the
