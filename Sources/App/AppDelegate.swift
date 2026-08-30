@@ -270,13 +270,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startBackup(selectedPaths: [String]) {
-        guard var config = config else { return }
-        config.source.paths = selectedPaths
-        try? config.save(to: Config.defaultPath)
-        self.config = config
+        guard var pending = config else { return }
+        pending.source.paths = selectedPaths
+        try? pending.save(to: Config.defaultPath)
+        self.config = pending
         iconManager.setState(.running)
         uiState.appState = .running
-        Log.info("Backup started: \(config.source.paths.count) paths -> \(config.destination.path)")
+        Log.info("Backup started: \(pending.source.paths.count) paths -> \(pending.destination.path)")
+
+        // Captured by value: a `var` crossing into a detached task is an error under
+        // Swift 6 concurrency checking.
+        let config = pending
 
         Task.detached {
             do {
