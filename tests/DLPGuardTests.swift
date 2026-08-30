@@ -169,16 +169,16 @@ final class DLPGuardTests {
         let destination = dir.appendingPathComponent("snapshot/unlabeled.pptx")
 
         let semaphore = DispatchSemaphore(value: 0)
-        var result: FileResult?
+        let box = ResultBox<FileResult>()
         Task {
-            result = await BackupEngine.processFile(entry: entry, destFile: destination.path,
-                                                    prevFile: previous.path,
-                                                    dlpGuard: DLPGuard(isActive: true))
+            box.value = await BackupEngine.processFile(entry: entry, destFile: destination.path,
+                                                       prevFile: previous.path,
+                                                       dlpGuard: DLPGuard(isActive: true))
             semaphore.signal()
         }
         semaphore.wait()
 
-        switch result {
+        switch box.value {
         case .hardlinked:
             try expect(FileManager.default.fileExists(atPath: destination.path),
                        "the hard-linked file must exist in the new snapshot")
@@ -186,7 +186,7 @@ final class DLPGuardTests {
             try fail("DLP skipped a file that could have been hard-linked (\(reason)) — "
                      + "this would drop it from the backup chain")
         default:
-            try fail("expected a hard link, got \(String(describing: result))")
+            try fail("expected a hard link, got \(String(describing: box.value))")
         }
     }
 
