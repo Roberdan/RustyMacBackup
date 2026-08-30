@@ -256,7 +256,7 @@ struct DLPConfig {
 /// Patterns excluded from every backup by default. Also used by discovery when sizing a
 /// candidate directory, so a folder that is only large because of its cache still counts
 /// as configuration.
-let defaultExcludePatterns: [String] = [
+let baseExcludePatterns: [String] = [
     // macOS system junk (CCC-recommended)
     ".DS_Store", ".Trash", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", ".VolumeIcon.icns",
@@ -289,6 +289,14 @@ let defaultExcludePatterns: [String] = [
     "*-cache", "*-caches", "*-profile", "*-profiles", "*-backups", "*.old", "*.bak",
     "*.sqlite", "*.sqlite3", "*.db", "*.db-wal", "*.db-shm",
 ]
+
+/// The full default exclusion set: the patterns above plus the hidden paths discovery
+/// refuses to treat as configuration. The second group matters because a folder can be
+/// included as a whole source (`~/.local`) while a branch inside it is pure data
+/// (`~/.local/share`) — filtering that only during discovery would still let the backup
+/// copy it.
+let defaultExcludePatterns: [String] =
+    baseExcludePatterns + ConfigDiscovery.hiddenDenyPaths.sorted()
 
 func generateDefaultConfig(backupPath: String) -> Config {
     let (discovered, dataExclusions) = ConfigDiscovery.discoverAll()
