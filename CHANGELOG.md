@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.5.0] - 2026-08-30
+
+### Added
+- **Hidden home folders are backed up by default** — discovery no longer depends on a
+  hand-written list of ~70 tools, which silently missed roughly 40 dot-directories on a
+  working machine (`.codex`, `.copilot`, `.agents`, `.gbrain`, `.docker`, `.terraform.d`,
+  `.gnupg`, …). Every hidden entry in the home directory is now a candidate, so a tool
+  installed tomorrow is covered without editing any list. The curated candidates stay: they
+  still carry the parts of `~/Library` that are configuration but not hidden.
+- **Two-pass "configuration, not data" filter** — first by name (package registries, model
+  stores, caches, logs, browser profiles, `node_modules`, timestamped `.bak-*` copies), then
+  by size: a folder still over 200 MB is opened, and the oversized part inside it is added to
+  the exclusion list rather than the whole folder being dropped or the whole folder being
+  copied. On the author's Mac this turns 74.7 GB of hidden folders into ~8 GB of actual
+  configuration.
+- **Credential-bearing folders are detected but off by default** — `.ssh`, `.gnupg`, `.aws`,
+  `.azure`, `.docker`, `.npmrc` and friends are marked sensitive by the dynamic scan, so the
+  generated configuration leaves them out and the existing opt-in path is unchanged.
+
+### Changed
+- **Size is measured net of the exclusions** — a folder that is only large because of its
+  cache counts as small. Without this, a 1.1 GB skill checkout whose bulk was `node_modules`
+  was treated as data and enumerated file by file.
+- **Listing no longer measures anything** — `discover` and the selection tree return in
+  milliseconds instead of a minute; the tree walk happens only when a configuration is
+  generated.
+
+### Fixed
+- **`ExcludeFilter` was quadratic in patterns** — single-component literal patterns are now a
+  set lookup per path component instead of a glob run per pattern. This is on the hot path of
+  every backup, not just discovery: roughly 2× faster on a large tree.
+
 ## [2.4.0] - 2026-08-25
 
 ### Added

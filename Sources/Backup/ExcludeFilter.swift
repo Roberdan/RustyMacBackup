@@ -3,8 +3,28 @@ import Foundation
 struct ExcludeFilter {
     let patterns: [String]
 
+    /// Single-component literal patterns ("node_modules", "logs"). Matching these is a
+    /// set lookup per path component instead of a glob run per pattern, which is the
+    /// difference between seconds and minutes on a large tree.
+    private let literalComponents: Set<String>
+    /// Everything else: wildcards and multi-component paths.
+    private let complexPatterns: [String]
+
     init(patterns: [String]) {
         self.patterns = patterns
+        var literals: Set<String> = []
+        var complex: [String] = []
+        for raw in patterns {
+            let pattern = Self.normalizePath(raw)
+            if pattern.isEmpty { continue }
+            if !Self.hasWildcards(pattern) && !pattern.contains("/") {
+                literals.insert(pattern)
+            } else {
+                complex.append(pattern)
+            }
+        }
+        self.literalComponents = literals
+        self.complexPatterns = complex
     }
 
     /// Check if a relative path should be excluded from backup.
@@ -16,12 +36,11 @@ struct ExcludeFilter {
         let path = Self.normalizePath(relativePath)
         let pathComponents = Self.pathComponents(path)
 
-        for rawPattern in patterns {
-            let pattern = Self.normalizePath(rawPattern)
-            if pattern.isEmpty {
-                continue
-            }
+        for component in pathComponents where literalComponents.contains(component) {
+            return true
+        }
 
+        for pattern in complexPatterns {
             // 1) Full path match (glob) + direct subtree inclusion for literal paths.
             if Self.globMatch(pattern: pattern, text: path) {
                 return true
@@ -50,12 +69,11 @@ struct ExcludeFilter {
         let path = Self.normalizePath(relativePath)
         let pathComponents = Self.pathComponents(path)
 
-        for rawPattern in patterns {
-            let pattern = Self.normalizePath(rawPattern)
-            if pattern.isEmpty {
-                continue
-            }
+        for component in pathComponents where literalComponents.contains(component) {
+            return true
+        }
 
+        for pattern in complexPatterns {
             // Direct directory match.
             if Self.globMatch(pattern: pattern, text: path) {
                 return true

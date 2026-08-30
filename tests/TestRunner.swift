@@ -16,6 +16,7 @@ struct TestRunner {
         let hardLinker = HardLinkerTests()
         let dlp = DLPGuardTests()
         let scanner = FileScannerTests()
+        let hidden = HiddenDiscoveryTests()
 
         let suites: [(String, TestClosure)] = [
             ("ExcludeFilter.wildcardStar", exclude.test_wildcardStar),
@@ -25,6 +26,12 @@ struct TestRunner {
             ("ExcludeFilter.notExcluded", exclude.test_notExcluded),
             ("ExcludeFilter.directorySkip", exclude.test_directorySkip),
             ("ExcludeFilter.dotPatterns", exclude.test_dotPatterns),
+            ("HiddenDiscovery.deniedCacheNames", hidden.test_deniedCacheNames),
+            ("HiddenDiscovery.realConfigSurvives", hidden.test_realConfigSurvives),
+            ("HiddenDiscovery.deniedPaths", hidden.test_deniedPaths),
+            ("HiddenDiscovery.secretsStayOptIn", hidden.test_secretsStayOptIn),
+            ("HiddenDiscovery.pruneRedundant", hidden.test_pruneRedundant),
+            ("HiddenDiscovery.sizeIgnoresExcludedContent", hidden.test_sizeIgnoresExcludedContent),
             ("Retention.parseValid", retention.test_parseBackupName_valid),
             ("Retention.parseInvalid", retention.test_parseBackupName_invalid),
             ("Retention.keepLatest", retention.test_alwaysKeepLatest),
