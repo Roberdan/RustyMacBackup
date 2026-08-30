@@ -40,3 +40,9 @@ func expectNotNil<T>(_ value: @autoclosure () -> T?, _ message: String) throws {
         throw TestFailure.failed(message)
     }
 }
+
+/// Holds a value produced inside a `Task` so a synchronous test can read it after
+/// waiting. A captured `var` is a concurrency error under Swift 6 checking.
+final class ResultBox<T>: @unchecked Sendable {
+    var value: T?
+}

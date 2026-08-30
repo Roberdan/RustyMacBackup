@@ -57,8 +57,25 @@ The app auto-discovers installed tools on first launch. You confirm what to incl
 | **AI Tools** | Claude CLI settings, Ollama config |
 | **Cloud/Auth** | Tailscale, 1Password CLI config |
 | **macOS** | Dock prefs, Finder prefs, keyboard shortcuts |
+| **App Configs** | Every hidden folder in your home (`~/.codex`, `~/.docker`, `~/.terraform.d`, …) that holds configuration rather than data |
 | **Repos** | `~/GitHub`, `~/Developer`, `~/Projects` — or any custom path |
 | **Custom** | Any file or folder you add via the `+` button |
+
+### Configuration, Not Data
+
+Hidden folders in your home directory are picked up automatically, so a tool you install
+tomorrow is backed up without editing any list. What is *not* configuration is filtered out
+in two passes:
+
+1. **By name** — package registries and downloaded runtimes (`.npm`, `.cargo/registry`,
+   `.rustup`, `.nuget`), model stores (`.ollama`, `.lmstudio`), caches, logs, browser
+   profiles, `node_modules`, timestamped `.bak-*` copies.
+2. **By size** — a folder over 200 MB once the exclusions are applied is data, not
+   configuration. The scan opens it, finds the oversized part inside, and adds *that* to the
+   exclusion list while still backing up the folder itself.
+
+Folders that hold credentials (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.docker`, `.npmrc`) are
+detected but left **off by default** — you opt into them explicitly, exactly as before.
 
 ### What It Will Never Touch
 

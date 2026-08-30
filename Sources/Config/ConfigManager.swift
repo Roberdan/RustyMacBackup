@@ -253,8 +253,53 @@ struct DLPConfig {
     var skipWhenLabelUnknown: Bool = true
 }
 
+/// Patterns excluded from every backup by default. Also used by discovery when sizing a
+/// candidate directory, so a folder that is only large because of its cache still counts
+/// as configuration.
+let baseExcludePatterns: [String] = [
+    // macOS system junk (CCC-recommended)
+    ".DS_Store", ".Trash", ".Trashes", ".Spotlight-V100",
+    ".fseventsd", ".TemporaryItems", ".VolumeIcon.icns",
+    "DocumentRevisions-V100",
+    // Git internals (large object store -- repo is re-cloneable)
+    ".git/objects", ".git/lfs",
+    // Dev build artifacts (regenerable via build/install)
+    "node_modules", ".next", ".nuxt", "dist", "build/intermediates",
+    "target/debug", "target/release",
+    ".build", "DerivedData",
+    "__pycache__", ".venv", ".tox", "*.pyc",
+    ".cache", "*.tmp", "*.swp",
+    // App caches inside backed-up dirs
+    "Caches", "GPUCache", "ShaderCache", "Code Cache",
+    "CachedData", "CachedExtensions", "CachedExtensionVSIXs",
+    // Large binaries
+    "*.iso", "*.dmg",
+    // AI tool caches (regenerable)
+    "embedding-cache.db*", "session-store.db*", "session.db",
+    "marketplace-cache", "*.jsonl",
+    // Logs
+    "*.log",
+    // AI models (huge, re-downloadable)
+    ".ollama/models", ".lmstudio",
+    // Caches, state and runtime data inside otherwise-config directories.
+    // Discovery picks the directories; these keep the data out of them.
+    "logs", "log", "sessions", "session-state", "session-store",
+    "backups", "worktrees", "blobs", "models", "registry", "downloads",
+    "language_servers", "shell-snapshots", "crashpad", "tmp", "temp",
+    "*-cache", "*-caches", "*-profile", "*-profiles", "*-backups", "*.old", "*.bak",
+    "*.sqlite", "*.sqlite3", "*.db", "*.db-wal", "*.db-shm",
+]
+
+/// The full default exclusion set: the patterns above plus the hidden paths discovery
+/// refuses to treat as configuration. The second group matters because a folder can be
+/// included as a whole source (`~/.local`) while a branch inside it is pure data
+/// (`~/.local/share`) — filtering that only during discovery would still let the backup
+/// copy it.
+let defaultExcludePatterns: [String] =
+    baseExcludePatterns + ConfigDiscovery.hiddenDenyPaths.sorted()
+
 func generateDefaultConfig(backupPath: String) -> Config {
-    let discovered = ConfigDiscovery.discover()
+    let (discovered, dataExclusions) = ConfigDiscovery.discoverAll()
     var paths: [String] = []
     for item in discovered where !item.sensitive {
         for path in item.paths where !ConfigDiscovery.isForbidden(path) {
@@ -264,39 +309,15 @@ func generateDefaultConfig(backupPath: String) -> Config {
     // Always include the backup config itself (for portability)
     paths.append("~/.config/rusty-mac-backup")
 
-    // Repos are discovered individually (~/GitHub/*, ~/Developer/*, ~/Projects/*)
+    // Never list a directory and its own children as separate sources
+    paths = ConfigDiscovery.pruneRedundant(paths)
 
-    let defaultExcludes = [
-        // macOS system junk (CCC-recommended)
-        ".DS_Store", ".Trash", ".Trashes", ".Spotlight-V100",
-        ".fseventsd", ".TemporaryItems", ".VolumeIcon.icns",
-        "DocumentRevisions-V100",
-        // Git internals (large object store -- repo is re-cloneable)
-        ".git/objects", ".git/lfs",
-        // Dev build artifacts (regenerable via build/install)
-        "node_modules", ".next", ".nuxt", "dist", "build/intermediates",
-        "target/debug", "target/release",
-        ".build", "DerivedData",
-        "__pycache__", ".venv", ".tox", "*.pyc",
-        ".cache", "*.tmp", "*.swp",
-        // App caches inside backed-up dirs
-        "Caches", "GPUCache", "ShaderCache", "Code Cache",
-        "CachedData", "CachedExtensions", "CachedExtensionVSIXs",
-        // Large binaries
-        "*.iso", "*.dmg",
-        // AI tool caches (regenerable)
-        "embedding-cache.db*", "session-store.db*", "session.db",
-        "marketplace-cache", "*.jsonl",
-        // Logs
-        "*.log",
-        // AI models (huge, re-downloadable)
-        ".ollama/models", ".lmstudio",
-    ]
+    // Repos are discovered individually (~/GitHub/*, ~/Developer/*, ~/Projects/*)
 
     return Config(
         source: SourceConfig(paths: paths),
         destination: DestinationConfig(path: backupPath),
-        exclude: ExcludeConfig(patterns: defaultExcludes),
+        exclude: ExcludeConfig(patterns: defaultExcludePatterns + dataExclusions.sorted()),
         retention: RetentionConfig()
     )
 }
