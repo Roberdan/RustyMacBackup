@@ -103,7 +103,20 @@ extension BackupEngine {
     }
 
     static func processFile(entry: FileEntry, destFile: String, prevFile: String?,
-                            dlpGuard: DLPGuard = DLPGuard(isActive: false)) async -> FileResult {
+                            protectionGuard: RightsManagementGuard = RightsManagementGuard()) async -> FileResult {
+        // Apply the user's exclusion before both hard links and copies. Old snapshots
+        // remain untouched, but excluded files must not enter a new snapshot.
+        do {
+            if let reason = try protectionGuard.skipReason(forFileAt: entry.absolutePath) {
+                if reason.hasPrefix("Protection inspection failed") {
+                    Log.warn("\(entry.relativePath): \(reason)")
+                }
+                return .skipped(path: entry.relativePath, reason: reason)
+            }
+        } catch {
+            return .error(path: entry.relativePath, error: error)
+        }
+
         let fm = FileManager.default
         let destDir = URL(fileURLWithPath: destFile).deletingLastPathComponent().path
         if !fm.fileExists(atPath: destDir) {
@@ -123,17 +136,7 @@ extension BackupEngine {
             }
         }
 
-        // Pre-flight, and deliberately AFTER the hard-link attempt: endpoint DLP vetoes the
-        // COPY, not the link. A file already present in the previous snapshot is linked
-        // within the destination volume without any content crossing the boundary, so it
-        // stays in the backup chain. Only a copy that DLP would refuse is skipped — attempting
-        // it is what raises the modal justification dialog on an unattended hourly run, and
-        // the file would not have been copied anyway.
-        if let reason = dlpGuard.skipReason(forFileAt: entry.absolutePath) {
-            return .skipped(path: entry.relativePath, reason: reason)
-        }
-
-        // Fall back to copyfile with APFS clone support
+        // Fall back to a copy without clone flags.
         do {
             try HardLinker.copyFile(from: entry.absolutePath, to: destFile)
             HardLinker.preserveModificationTime(at: destFile, mtime: entry.mtime)

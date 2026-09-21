@@ -2,11 +2,13 @@ import Foundation
 import Darwin
 
 enum ErrorReporter {
-    /// Category for files deliberately left out because endpoint DLP would refuse the copy.
+    /// Categories for intentional rights-protection skips and unsuccessful inspection.
     /// Kept distinct from `permission_denied`: the operator can act on a permission problem,
     /// but no local setting fixes a Purview policy, and telling him to check Full Disk Access
     /// would send him chasing a fix that does not exist.
     static let dlpSkippedCategory = "dlp_skipped"
+    static let protectionSkippedCategory = "rights_managed_skipped"
+    static let protectionInspectionCategory = "protection_inspection_failed"
 
     static func categorizeErrors(_ errors: [(path: String, error: Error)],
                                  skips: [(path: String, reason: String)] = []) -> BackupErrorFile {
@@ -15,7 +17,8 @@ enum ErrorReporter {
             "not_found": (0, []),
             "io_error": (0, []),
             "other": (0, []),
-            dlpSkippedCategory: (0, [])
+            protectionSkippedCategory: (0, []),
+            protectionInspectionCategory: (0, [])
         ]
 
         for (path, error) in errors {
@@ -57,11 +60,13 @@ enum ErrorReporter {
             catInfos[key] = ErrorCategoryInfo(count: value.count, files: value.files)
         }
 
-        var skipInfo = ErrorCategoryInfo(count: skips.count, files: Array(skips.prefix(50).map(\.path)))
-        if skips.isEmpty {
-            skipInfo = ErrorCategoryInfo(count: 0, files: [])
+        for (category, matchingSkips) in Dictionary(grouping: skips, by: {
+            $0.reason.hasPrefix("Protection inspection failed")
+                ? protectionInspectionCategory : protectionSkippedCategory
+        }) {
+            catInfos[category] = ErrorCategoryInfo(
+                count: matchingSkips.count, files: Array(matchingSkips.prefix(50).map(\.path)))
         }
-        catInfos[dlpSkippedCategory] = skipInfo
 
         return BackupErrorFile(
             total: errors.count,
@@ -76,7 +81,9 @@ enum ErrorReporter {
         case "not_found":         return "File non trovato"
         case "no_space":          return "Disco pieno"
         case "io_error":          return "Errore di lettura/scrittura"
-        case dlpSkippedCategory:  return "Esclusi da policy aziendale (DLP)"
+        case dlpSkippedCategory:  return "Esclusi dal precedente filtro DLP"
+        case protectionSkippedCategory: return "File protetti esclusi (Rights Management)"
+        case protectionInspectionCategory: return "Protezione non verificabile"
         default:                  return "Errore generico"
         }
     }
@@ -92,7 +99,11 @@ enum ErrorReporter {
         case "io_error":
             return "Controlla la salute del disco di backup con Utility Disco."
         case dlpSkippedCategory:
-            return "File Office senza etichetta di riservatezza: Endpoint DLP ne vieta la copia su disco esterno. Etichetta i file in Office per includerli, oppure disattiva il controllo con skip_unlabeled_office = false."
+            return "Esclusioni registrate dal precedente filtro Office. Il nuovo filtro distingue la protezione Rights Management dalle regole aziendali sulla copia."
+        case protectionSkippedCategory:
+            return "Per includerli attiva Includi file protetti (Rights Management) nella selezione del backup. Le protezioni aziendali restano attive e possono bloccare la copia."
+        case protectionInspectionCategory:
+            return "Impossibile verificare la protezione di alcuni file: non sono stati copiati. Controlla accessibilità e integrità dei file indicati."
         default:
             return "Apri il log per i dettagli."
         }
@@ -105,7 +116,9 @@ enum ErrorReporter {
 
     static func formatActionableMessage(error: BackupErrorFile) -> String {
         let dlpSkips = error.categories[dlpSkippedCategory]?.count ?? 0
-        if error.total == 0 && dlpSkips == 0 {
+        let protectionSkips = error.categories[protectionSkippedCategory]?.count ?? 0
+        let inspectionSkips = error.categories[protectionInspectionCategory]?.count ?? 0
+        if error.total == 0 && dlpSkips == 0 && protectionSkips == 0 && inspectionSkips == 0 {
             return "Nessun errore durante il backup."
         }
 
@@ -126,7 +139,13 @@ enum ErrorReporter {
             lines.append("  ⚙ \(other.count) altri errori")
         }
         if dlpSkips > 0 {
-            lines.append("  🏢 \(dlpSkips) file esclusi da policy aziendale (DLP) — File Office senza etichetta di riservatezza")
+            lines.append("  🏢 \(dlpSkips) file esclusi dal precedente filtro DLP")
+        }
+        if protectionSkips > 0 {
+            lines.append("  🔒 \(protectionSkips) file protetti esclusi dalle impostazioni (Rights Management)")
+        }
+        if inspectionSkips > 0 {
+            lines.append("  ⚠ \(inspectionSkips) file non copiati: protezione non verificabile")
         }
         return lines.joined(separator: "\n")
     }

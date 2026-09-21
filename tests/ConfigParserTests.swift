@@ -50,6 +50,7 @@ final class ConfigParserTests {
         try expectEqual(config.retention.daily, 30, "default daily mismatch")
         try expectEqual(config.retention.weekly, 52, "default weekly mismatch")
         try expectEqual(config.retention.monthly, 0, "default monthly mismatch")
+        try expect(!config.protection.includeRightsManagedFiles, "old configs must exclude protected files by default")
     }
 
     func test_commentsIgnored() throws {
@@ -107,5 +108,23 @@ final class ConfigParserTests {
         try expectEqual(config.source.paths.count, 3, "legacy migration should produce 3 paths")
         try expectEqual(config.source.paths[0], "/Users/test", "legacy path should be first")
         try expectEqual(config.source.paths[1], "/etc", "extra_paths should follow")
+    }
+
+    func test_protectionPreferenceRoundTripAndMigration() throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".toml")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        for legacy in ["", "[dlp]\nskip_unlabeled_office = false\nskip_when_label_unknown = false",
+                       "[dlp]\nskip_unlabeled_office = true\nskip_when_label_unknown = true"] {
+            try legacy.write(to: tmp, atomically: true, encoding: .utf8)
+            var config = try Config.load(from: tmp)
+            try expect(!config.protection.includeRightsManagedFiles, "missing new key must default to exclusion")
+            for enabled in [true, false] {
+                config.protection.includeRightsManagedFiles = enabled
+                try config.save(to: tmp)
+                let loaded = try Config.load(from: tmp)
+                try expectEqual(loaded.protection.includeRightsManagedFiles, enabled, "protection toggle must survive reload")
+                try expectEqual(RightsManagementGuard(config: loaded.protection).isActive, !enabled, "engine must honor saved toggle")
+            }
+        }
     }
 }

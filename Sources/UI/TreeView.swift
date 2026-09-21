@@ -30,17 +30,19 @@ final class TreeSelectionModel: ObservableObject {
     @Published var checkedPaths: Set<String>
     @Published var expandedCategories: Set<String>
     @Published var brewInstall: Bool = true
+    @Published var includeRightsManagedFiles: Bool
     /// Override restore destination: maps primaryPath → custom dest (~/…)
     @Published var destinationOverrides: [String: String] = [:]
 
-    var onConfirmBackup: (([String]) -> Void)?
+    var onConfirmBackup: (([String], Bool) -> Void)?
     var onConfirmRestore: ((URL, [String], Bool, [String: String]) -> Void)?
     var onCancel: (() -> Void)?
     var onRequestAddPath: (() -> Void)?
     var onRequestChangeDestination: ((ItemInfo, @escaping (String) -> Void) -> Void)?
 
-    init(mode: TreeWindowMode, enabledPaths: Set<String> = []) {
+    init(mode: TreeWindowMode, enabledPaths: Set<String> = [], includeRightsManagedFiles: Bool = false) {
         self.mode = mode
+        self.includeRightsManagedFiles = includeRightsManagedFiles
 
         switch mode {
         case .backup:
@@ -168,6 +170,10 @@ final class TreeSelectionModel: ObservableObject {
     }
 
     // MARK: - Mutations
+
+    func confirmBackup() {
+        onConfirmBackup?(selectedPaths, includeRightsManagedFiles)
+    }
 
     func toggleCategory(_ category: CategoryInfo) {
         let all = category.items.flatMap(\.paths)
@@ -403,6 +409,26 @@ struct TreeView: View {
             }
             .listStyle(.inset)
 
+            if model.mode.isBackup {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Includi file protetti (Rights Management)", isOn: $model.includeRightsManagedFiles)
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("includeRightsManagedFiles")
+                        .accessibilityHint("Indipendente da Tutti. Può causare richieste di autorizzazione aziendale.")
+                    Text("Esclude i file con protezione riconosciuta, non tutti i documenti Office. Includerli può causare richieste aziendali. Altre regole aziendali possono bloccare anche file non protetti.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("La scelta viene salvata con Avvia Backup.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .font(.system(size: 12))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            }
+
             if model.hasBrewfile {
                 Divider()
                 Toggle("Reinstall Homebrew packages from Brewfile", isOn: $model.brewInstall)
@@ -471,7 +497,7 @@ struct TreeView: View {
     private func handleConfirm() {
         switch model.mode {
         case .backup:
-            model.onConfirmBackup?(model.selectedPaths)
+            model.confirmBackup()
         case .restore(_):
             let conflicts = model.categories.flatMap(\.items)
                 .filter { model.isItemChecked($0) && $0.isConflict }

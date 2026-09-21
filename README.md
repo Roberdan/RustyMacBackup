@@ -181,37 +181,56 @@ daily   = 30    # keep last 30 daily snapshots
 weekly  = 52    # keep last 52 weekly snapshots
 monthly = 0     # keep forever
 
-[dlp]
-skip_unlabeled_office   = true   # don't attempt copies endpoint DLP will veto
-skip_when_label_unknown = true   # legacy .doc/.xls/.ppt too (label unreadable)
+[protection]
+include_rights_managed_files = false
 ```
 
-### Endpoint DLP (managed Macs)
+### Rights Management protection (managed documents)
 
-On a Mac managed with Microsoft Purview, a common policy blocks **copying unlabeled Office
-files to removable media**. The endpoint agent vetoes the write itself: `copyfile()` returns
-`EPERM` and macOS raises a modal "Data Loss Prevention" dialog asking for a business
-justification. On an unattended hourly backup nobody is there to answer it, the file is not
-copied anyway, and the error looks like a permission problem it is not — no amount of Full
-Disk Access fixes it.
+Recognized Rights Management protected files are **excluded by default**, regardless of
+destination. This is not an Office-format exclusion: ordinary Office files, PDFs, images
+and text remain included. A sensitivity label alone is not proof of encryption/protection.
 
-RustyMacBackup therefore decides *before* the copy. A file is skipped only when all three are
-true: the destination is removable media, the file is an Office document, and it carries no
-Microsoft Information Protection sensitivity label (read from `docProps/custom.xml` inside the
-OOXML package).
-
-Two properties are deliberate:
-
-- **Hard links win.** The check runs *after* the hard-link attempt, because DLP vetoes the
-  copy, not the link. A file already in the previous snapshot is linked inside the destination
-  volume and stays in the backup chain — switching the guard on never evicts what is already
-  backed up.
+- **Separate opt-in.** In the backup source selector, enable **Includi file protetti
+  (Rights Management)**.
+  **Tutti** / **Nessuno** and folder selections never change this switch. **Avvia Backup**
+  saves it for subsequent manual, CLI and scheduled runs; **Annulla** discards the edit.
+  Alternatively, set `[protection] include_rights_managed_files = true`. This permits normal copy attempts,
+  not a bypass of company protections: authorization dialogs or blocked copies can return.
+- **Exclusion before any copy or hard link.** Explicitly selected protected files are excluded
+  too. New snapshots omit them even if an older snapshot contains them. Existing snapshots
+  are not modified by this preference (normal retention still applies).
 - **A skip is never silent.** Skipped files are counted in `status.json` (`files_skipped`) and
-  named in `errors.json` under `dlp_skipped`, separate from real errors. "Not in the backup" is
-  always something the report says out loud.
+  reported in `errors.json` under `rights_managed_skipped` (up to 50 example paths).
+  Malformed inspection metadata is skipped separately under
+  `protection_inspection_failed`, with the reason in the log, not claimed as rights protection.
+  Ordinary permission, missing-file and I/O errors retain their normal actionable categories.
 
-To include a file, give it a sensitivity label in Office. To turn the behaviour off entirely,
-set `skip_unlabeled_office = false` — and expect the dialog.
+Detection runs locally, without launching a document viewer, authenticating, decrypting,
+changing labels or uploading data:
+
+- Microsoft protected containers: `.pfile`, `.ppdf`, `.ptxt`, `.pxml`, protected image
+  extensions and `.rpmsg` (case-insensitive).
+- Compound-file directory metadata: `DRMEncryptedTransform` / `DRMEncryptedDataSpace`
+  from [MS-OFFCRYPTO IRMDS](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-offcrypto/dc6708bb-e852-44b1-acba-f74614155191).
+  The directory allocation chain is followed even when fragmented; password-only Office
+  encryption is not treated as Rights Management.
+- PDF `MicrosoftIRMServices` security-handler names and the legacy
+  `MicrosoftIRMServices Protected PDF.pdf` attachment name. PDFs are scanned in bounded-memory
+  chunks, including metadata in the middle; larger PDFs require an additional read pass.
+
+**Limits:** this is a format-marker detector, not the Microsoft MIP SDK or an exhaustive
+rights-policy evaluator. Unknown/vendor-specific protection, renamed generic containers,
+compressed PDF metadata and protected attachments inside arbitrary archives can be missed.
+Detected markers indicate protection, not license validity. Files changing during a backup
+can also invalidate inspection. See Microsoft's
+[supported formats](https://learn.microsoft.com/en-us/information-protection/develop/concept-supported-filetypes).
+
+**Endpoint DLP is different:** a company may block USB copies of *unprotected, unlabeled*
+documents. Such a policy is not stored as Rights Management protection in the file; this
+filter cannot predict it or guarantee that every company dialog disappears. Full Disk Access
+does not override it. The previous `skip_unlabeled_office` / `skip_when_label_unknown` flags
+are retired; older configs adopt the new protection-only default when the new key is absent.
 
 ---
 
@@ -364,4 +383,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Read [`CLAUDE.md`](CLAUDE.md) first.
 ## License
 
 MIT — see [LICENSE](LICENSE)
-
