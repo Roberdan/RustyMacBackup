@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.5.1] - 2026-09-22
 
 ### Changed
 - Recognized Rights Management protected documents are excluded by default across formats,
