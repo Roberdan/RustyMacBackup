@@ -112,11 +112,9 @@ enum BackupEngine {
         let VANISHED_THRESHOLD = 3
         let maxWorkers = 8  // per spec: TaskGroup concurrency limit
 
-        let dlpGuard = DLPGuard.forDestination(destPath,
-                                               enabled: config.dlp.skipUnlabeledOfficeFiles,
-                                               skipWhenLabelUnknown: config.dlp.skipWhenLabelUnknown)
-        if dlpGuard.isActive {
-            Log.info("Endpoint DLP guard active -- unlabeled Office files will be skipped, not attempted")
+        let protectionGuard = RightsManagementGuard(config: config.protection)
+        if protectionGuard.isActive {
+            Log.info("Rights-managed documents excluded by preference -- local format inspection only")
         }
 
         // Helper: post-copy checks and stats merge (called from main task only — no data races)
@@ -162,7 +160,7 @@ enum BackupEngine {
 
                 group.addTask {
                     (await BackupEngine.processFile(entry: file, destFile: destFile,
-                                                    prevFile: prevFile, dlpGuard: dlpGuard), file)
+                                                    prevFile: prevFile, protectionGuard: protectionGuard), file)
                 }
                 inFlight += 1
 
@@ -228,14 +226,14 @@ enum BackupEngine {
 
         if !errorList.isEmpty || !skipList.isEmpty {
             // F-06: Use ErrorReporter for semantic keys (permission_denied, not_found, etc.)
-            // DLP skips travel in the same report: a file absent from the backup must be
+            // Protection skips travel in the same report: a file absent from the backup must be
             // visible in exactly one place, whether it failed or was deliberately left out.
             try? statusWriter.writeErrors(
                 errors: ErrorReporter.categorizeErrors(errorList, skips: skipList))
         }
 
         if !skipList.isEmpty {
-            Log.warn("\(skipList.count) file(s) skipped by endpoint DLP policy -- see errors.json")
+            Log.info("\(skipList.count) file(s) excluded by protection preference -- see errors.json")
         }
 
         let totalFiles = processedCount

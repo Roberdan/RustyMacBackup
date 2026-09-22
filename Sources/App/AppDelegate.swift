@@ -215,9 +215,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let treeWC = TreeWindowController(
             mode: .backup,
             enabledPaths: Set(config.source.paths),
-            onConfirmBackup: { [weak self] selectedPaths in
+            includeRightsManagedFiles: config.protection.includeRightsManagedFiles,
+            onConfirmBackup: { [weak self] selectedPaths, includeRightsManagedFiles in
                 self?.treeWindowController = nil
-                self?.startBackup(selectedPaths: selectedPaths)
+                self?.startBackup(selectedPaths: selectedPaths, includeRightsManagedFiles: includeRightsManagedFiles)
             }
         )
         treeWC.showWindow(nil)
@@ -269,10 +270,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         treeWindowController = treeWC
     }
 
-    private func startBackup(selectedPaths: [String]) {
+    private func startBackup(selectedPaths: [String], includeRightsManagedFiles: Bool) {
         guard var pending = config else { return }
         pending.source.paths = selectedPaths
-        try? pending.save(to: Config.defaultPath)
+        pending.protection.includeRightsManagedFiles = includeRightsManagedFiles
+        do {
+            try pending.save(to: Config.defaultPath)
+        } catch {
+            Log.error("Cannot save backup preferences: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "Impossibile salvare le impostazioni"
+            alert.informativeText = "Backup non avviato. \(error.localizedDescription)"
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
         self.config = pending
         iconManager.setState(.running)
         uiState.appState = .running

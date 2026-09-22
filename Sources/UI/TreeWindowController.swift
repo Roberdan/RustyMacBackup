@@ -21,10 +21,12 @@ class TreeWindowController: NSWindowController {
 
     init(mode: TreeWindowMode,
          enabledPaths: Set<String> = [],
-         onConfirmBackup: @escaping ([String]) -> Void = { _ in },
+         includeRightsManagedFiles: Bool = false,
+         onConfirmBackup: @escaping ([String], Bool) -> Void = { _, _ in },
          onConfirmRestore: @escaping (URL, [String], Bool, [String: String]) -> Void = { _, _, _, _ in }) {
 
-        let model = TreeSelectionModel(mode: mode, enabledPaths: enabledPaths)
+        let model = TreeSelectionModel(mode: mode, enabledPaths: enabledPaths,
+                                       includeRightsManagedFiles: includeRightsManagedFiles)
         model.onConfirmBackup = onConfirmBackup
         model.onConfirmRestore = onConfirmRestore
 
@@ -50,9 +52,9 @@ class TreeWindowController: NSWindowController {
         model.onCancel = { [weak self] in self?.window?.close() }
 
         // After confirm, close the window then call through.
-        model.onConfirmBackup = { [weak self, onConfirmBackup] paths in
+        model.onConfirmBackup = { [weak self, onConfirmBackup] paths, includeRightsManagedFiles in
             self?.window?.close()
-            onConfirmBackup(paths)
+            onConfirmBackup(paths, includeRightsManagedFiles)
         }
         model.onConfirmRestore = { [weak self, onConfirmRestore] url, items, brew, overrides in
             self?.window?.close()
@@ -93,4 +95,3 @@ class TreeWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 }
-

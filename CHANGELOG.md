@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.5.1] - 2026-09-22
+
+### Changed
+- Recognized Rights Management protected documents are excluded by default across formats,
+  before copies or hard links, on all destinations. Ordinary Office documents remain included.
+  Detection uses protected-container extensions and local CFB/PDF metadata, not decryption.
+- Added a separate **Includi file protetti (Rights Management)** switch, independent
+  of **Tutti** and **Nessuno**. Starting a backup saves the preference for later runs.
+- Replaced label-based DLP settings with `[protection] include_rights_managed_files = false`.
+  The detector does not predict separate endpoint policies (such as blocking unlabeled USB copies).
+- Reports distinguish recognized protection from inspection failures. Failure to save the
+  preference is visible and prevents starting the backup. Existing snapshots are untouched.
+
 ## [2.5.0] - 2026-08-30
 
 ### Added

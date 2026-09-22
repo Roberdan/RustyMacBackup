@@ -5,7 +5,7 @@ struct Config {
     var destination: DestinationConfig
     var exclude: ExcludeConfig
     var retention: RetentionConfig
-    var dlp: DLPConfig = DLPConfig()
+    var protection: ProtectionConfig = ProtectionConfig()
 
     static var defaultPath: URL {
         URL(fileURLWithPath: ("~/.config/rusty-mac-backup/config.toml" as NSString).expandingTildeInPath)
@@ -44,9 +44,8 @@ struct Config {
         out.append("weekly = \(retention.weekly)")
         out.append("monthly = \(retention.monthly)")
         out.append("")
-        out.append("[dlp]")
-        out.append("skip_unlabeled_office = \(dlp.skipUnlabeledOfficeFiles)")
-        out.append("skip_when_label_unknown = \(dlp.skipWhenLabelUnknown)")
+        out.append("[protection]")
+        out.append("include_rights_managed_files = \(protection.includeRightsManagedFiles)")
         out.append("")
 
         let data = out.joined(separator: "\n").data(using: .utf8)!
@@ -153,8 +152,7 @@ struct Config {
 
     private static func assign(section: String, key: String, boolValue: Bool, to config: inout Config) {
         switch "\(section).\(key)" {
-        case "dlp.skip_unlabeled_office": config.dlp.skipUnlabeledOfficeFiles = boolValue
-        case "dlp.skip_when_label_unknown": config.dlp.skipWhenLabelUnknown = boolValue
+        case "protection.include_rights_managed_files": config.protection.includeRightsManagedFiles = boolValue
         default: break
         }
     }
@@ -243,14 +241,9 @@ struct RetentionConfig {
     var monthly: UInt32 = 0
 }
 
-/// Endpoint DLP behaviour. Defaults on, because the alternative — attempting a copy the
-/// Purview agent vetoes — raises a modal justification dialog during an unattended hourly
-/// backup and still does not copy the file.
-struct DLPConfig {
-    var skipUnlabeledOfficeFiles: Bool = true
-    /// Office formats whose label cannot be read (legacy .doc/.xls/.ppt) are skipped too.
-    /// Set false to attempt them anyway and accept the possible prompt.
-    var skipWhenLabelUnknown: Bool = true
+/// Missing keys, including older label-based configurations, default to exclusion.
+struct ProtectionConfig {
+    var includeRightsManagedFiles: Bool = false
 }
 
 /// Patterns excluded from every backup by default. Also used by discovery when sizing a

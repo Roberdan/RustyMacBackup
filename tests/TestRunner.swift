@@ -14,9 +14,10 @@ struct TestRunner {
         let config = ConfigParserTests()
         let backup = BackupEngineTests()
         let hardLinker = HardLinkerTests()
-        let dlp = DLPGuardTests()
+        let protection = RightsManagementTests()
         let scanner = FileScannerTests()
         let hidden = HiddenDiscoveryTests()
+        let tree = TreeSelectionTests()
 
         let suites: [(String, TestClosure)] = [
             ("ExcludeFilter.wildcardStar", exclude.test_wildcardStar),
@@ -43,6 +44,8 @@ struct TestRunner {
             ("Config.comments", config.test_commentsIgnored),
             ("Config.roundTrip", config.test_roundTrip),
             ("Config.legacyMigration", config.test_legacyConfigMigration),
+            ("Config.protectionPreference", config.test_protectionPreferenceRoundTripAndMigration),
+            ("TreeSelection.protectionToggle", tree.test_protectionToggleIsIndependentAndConfirmed),
             ("BackupEngine.naming", backup.test_snapshotNaming),
             ("BackupEngine.inProgress", backup.test_inProgressPrefix),
             ("BackupEngine.statusFormat", backup.test_statusFileFormat),
@@ -50,15 +53,14 @@ struct TestRunner {
             ("HardLinker.diffSize", hardLinker.test_differentSize),
             ("HardLinker.hardLink", hardLinker.test_hardLinkCreation),
             ("HardLinker.copyFile", hardLinker.test_copyFileCreation),
-            ("DLPGuard.officeExtensions", dlp.test_officeExtensionsRecognised),
-            ("DLPGuard.nonOfficeNeverSkipped", dlp.test_nonOfficeFilesAreNeverSkipped),
-            ("DLPGuard.unlabeledSkipped", dlp.test_unlabeledOfficeFileIsSkipped),
-            ("DLPGuard.labeledCopied", dlp.test_labeledOfficeFileIsCopied),
-            ("DLPGuard.legacyUnknown", dlp.test_legacyBinaryFormatIsUnknown),
-            ("DLPGuard.inactiveSkipsNothing", dlp.test_inactiveGuardSkipsNothing),
-            ("DLPGuard.internalDestination", dlp.test_internalDestinationDoesNotActivateGuard),
-            ("DLPGuard.hardLinkWins", dlp.test_hardLinkWinsOverDLPSkip),
-            ("DLPGuard.skipsReported", dlp.test_skipsAreReportedInTheirOwnCategory),
+            ("Protection.containers", protection.test_protectedContainersAcrossFormats),
+            ("Protection.compound", protection.test_compoundProtectionAndPasswordDistinction),
+            ("Protection.pdf", protection.test_pdfProtectionAndOrdinaryText),
+            ("Protection.ordinaryIncluded", protection.test_ordinaryOfficeAndOtherFilesRemainIncluded),
+            ("Protection.copyAndLink", protection.test_preferenceBeforeCopyAndHardLink),
+            ("Protection.inspectionFailures", protection.test_inspectionFailuresAreNotClaimedAsProtection),
+            ("Protection.permissionErrors", protection.test_permissionErrorsKeepActionableCategory),
+            ("Protection.reporting", protection.test_skipsAreReportedSeparately),
             ("FileScanner.excludedFileKeepsSibling", scanner.test_excludedFileDoesNotSwallowSiblingDirectory),
             ("FileScanner.excludedDirPruned", scanner.test_excludedDirectoryIsStillPruned),
             ("FileScanner.multipleExcludedFiles", scanner.test_multipleExcludedFilesBeforeDirectory)
