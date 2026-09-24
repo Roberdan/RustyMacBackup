@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.6.0] - 2026-09-24
+
+### Added
+- **Libera spazio…** in the menu and `prune --older-than 1m|6m|1y` in the CLI:
+  one-time manual cleanup with a preview (destination, cutoff date, count, free space)
+  and explicit confirmation. The CLI previews unless `--yes` is given. After deletion the
+  space actually freed is reported, measured on the disk (hard-linked data shared with kept
+  snapshots frees nothing). The most recent snapshot is always kept.
+- Backup, restore and cleanup share a destination lock; interrupted deletions stay in a
+  hidden `.deleting-*` folder instead of looking like a valid snapshot.
+- Known regenerable caches (`node_modules`, `.venv`, `__pycache__`, `DerivedData`,
+  `target/debug`, …) are always excluded, also with old configs and explicit sources.
+
+### Fixed
+- Menu popover resizes with its content (the disk-space line no longer hides under
+  **Start Backup**); cleanup shows its real phase (checking, awaiting confirmation,
+  deleting) and disabled rows look disabled.
+- Multi-component exclusions (e.g. `.git/objects`) now match inside nested repositories.
+- Unit tests no longer write into the app's real log file.
+
 ## [2.5.1] - 2026-09-22
 
 ### Changed

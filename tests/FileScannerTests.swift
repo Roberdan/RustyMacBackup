@@ -2,6 +2,29 @@ import Foundation
 
 /// Tests for the streaming file scanner.
 final class FileScannerTests {
+    func test_explicitSourcesCannotBypassExclusions() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for path in ["repo/node_modules/pkg/index.js", "repo/.yarn/cache/pkg.zip",
+                     "repo/target/debug/bin", "repo/file.tmp", "repo/src/main.swift"] {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "data".write(to: url, atomically: true, encoding: .utf8)
+        }
+        let paths = ["repo/node_modules", "repo/node_modules/pkg/index.js", "repo/file.tmp", "repo/src/main.swift"]
+        var seen: [String] = []
+        FileScanner.walk(sources: paths.map { root.appendingPathComponent($0) },
+                         basePaths: Array(repeating: root.path, count: paths.count),
+                         excludeFilter: ExcludeFilter(patterns: [])) { entry in
+            seen.append(entry.relativePath)
+            return true
+        }
+        try expectEqual(seen, ["repo/src/main.swift"], "Explicit files and directory roots must obey exclusions")
+        try expectEqual(scan(root: root, patterns: []), ["repo/src/main.swift"], "Old empty config must still skip nested caches")
+        try expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("repo/file.tmp").path),
+                   "Exclusion must not delete original temporary files")
+    }
+
 
     /// The temp dir is canonicalised with `realpath(3)`, because `NSTemporaryDirectory()`
     /// hands back `/var/...` while the enumerator reports `/private/var/...`. Foundation's

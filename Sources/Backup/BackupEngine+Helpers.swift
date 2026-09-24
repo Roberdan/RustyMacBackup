@@ -14,6 +14,7 @@ extension BackupEngine {
         let target = URL(fileURLWithPath: path).standardized.path
         return vols.contains { vol in
             let vp = vol.standardized.path
+            if target.hasPrefix("/Volumes/") && !vp.hasPrefix("/Volumes/") { return false }
             return target == vp || target.hasPrefix(vp == "/" ? vp : vp + "/")
         }
     }

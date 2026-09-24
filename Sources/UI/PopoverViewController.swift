@@ -19,6 +19,8 @@ class PopoverViewController: NSViewController {
         let hosting = NSHostingController(
             rootView: AnyView(PopoverView().environmentObject(uiState))
         )
+        // Let the popover grow/shrink with its content instead of clipping rows under each other.
+        hosting.sizingOptions = [.preferredContentSize]
         hostingController = hosting
         addChild(hosting)
         view = hosting.view

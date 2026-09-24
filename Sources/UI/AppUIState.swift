@@ -21,6 +21,9 @@ final class AppUIState: ObservableObject {
     @Published var status: BackupStatusFile?
     @Published var config: Config?
     @Published var scheduleLabel: String = "Off"   // human-readable current schedule
+    /// nil = no cleanup; otherwise the current phase, shown in place of the status line.
+    @Published var cleanupPhase: CleanupPhase?
+    var isCleaning: Bool { cleanupPhase != nil }
 
     /// Non-nil when a newer version is available on GitHub.
     @Published var updateAvailable: String?
@@ -52,12 +55,27 @@ final class AppUIState: ObservableObject {
     /// nil = disable, >0 = intervalMinutes, <0 = daily at abs(value):00
     var onSetSchedule: ((Int?) -> Void)?
     var onRequestScheduleMenu: (() -> Void)?
+    var onRequestCleanupMenu: (() -> Void)?
 
     // MARK: - Computed helpers
 
-    var isRunning: Bool { appState == .running || appState == .restoring }
+    var isRunning: Bool { appState == .running || appState == .restoring || appState == .stopping }
 
     // F-19: hasBackups and canUndo are now cached — no disk I/O on SwiftUI render
     var hasBackups: Bool { cachedHasBackups }
     var canUndo: Bool { cachedCanUndo }
+}
+
+enum CleanupPhase {
+    case reading, awaitingConfirmation, deleting
+
+    var label: String {
+        switch self {
+        case .reading: return "Controllo vecchi backup…"
+        case .awaitingConfirmation: return "Pulizia: in attesa di conferma"
+        case .deleting: return "Eliminazione vecchi backup…"
+        }
+    }
+
+    var showsProgress: Bool { self != .awaitingConfirmation }
 }

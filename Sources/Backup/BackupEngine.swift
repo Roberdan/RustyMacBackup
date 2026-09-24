@@ -43,8 +43,14 @@ enum BackupEngine {
         Log.info("I/O priority: \(onBattery ? "throttled (battery)" : "full speed (AC)")")
         guard preflightWriteTest(at: destURL) else { throw BackupError.notWritable(destPath) }
 
+        let operationLock = try DestinationLock(at: destURL)
+        defer { withExtendedLifetime(operationLock) {} }
+        let lockPath = destURL.appendingPathComponent("rustymacbackup.lock").path
+        try acquireLock(at: lockPath)
+        defer { try? FileManager.default.removeItem(atPath: lockPath) }
+
         if diskFreeSpace(at: destPath) < MIN_FREE_SPACE {
-            let _ = RetentionManager.pruneBackups(at: destURL, policy: config.retention, dryRun: false)
+            let _ = try RetentionManager.pruneLockedBackups(at: destURL, policy: config.retention, dryRun: false)
             if diskFreeSpace(at: destPath) < MIN_FREE_SPACE {
                 throw BackupError.insufficientSpace(diskFreeSpace(at: destPath))
             }
@@ -57,9 +63,6 @@ enum BackupEngine {
         let inProgressURL = destURL.appendingPathComponent("in-progress-\(timestamp)")
         try FileManager.default.createDirectory(at: inProgressURL, withIntermediateDirectories: true)
 
-        let lockPath = destURL.appendingPathComponent("rustymacbackup.lock").path
-        try acquireLock(at: lockPath)
-        defer { try? FileManager.default.removeItem(atPath: lockPath) }
         // F-01: clean stale dirs only AFTER acquiring the lock
         cleanStaleInProgress(at: destURL)
 

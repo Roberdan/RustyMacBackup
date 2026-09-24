@@ -1,6 +1,36 @@
 import Foundation
 
 final class ExcludeFilterTests {
+    func test_mandatoryCachesWithOldConfig() throws {
+        let filter = ExcludeFilter(patterns: [])
+        for path in ["GitHub/app/node_modules/pkg/index.js", "GitHub/app/.yarn/cache/pkg.zip",
+                     "GitHub/app/.gradle/caches/data", "GitHub/app/target/debug/app",
+                     "GitHub/app/target/release/app", "GitHub/app/build/intermediates/data",
+                     "GitHub/app/.pytest_cache/data", "GitHub/app/.ruff_cache/data",
+                     "GitHub/app/.mypy_cache/data", "GitHub/app/__pycache__/mod.pyc",
+                     "GitHub/app/.cache/data", "GitHub/app/.next/cache/data",
+                     "GitHub/app/.turbo/data", "GitHub/app/file.tmp", "GitHub/app/file.swp"] {
+            try expect(filter.isExcluded(relativePath: path), "Mandatory exclusion: \(path)")
+            try expect(filter.shouldSkipDirectory(relativePath: path), "Prune excluded subtree: \(path)")
+        }
+        for path in ["GitHub/app/src/cache.swift", "GitHub/app/src/tempParser.ts",
+                     "GitHub/app/.git/objects/local-commit", "GitHub/app/.env",
+                     "GitHub/app/package-lock.json", "GitHub/app/Cargo.lock",
+                     "GitHub/app/data.sqlite", "GitHub/app/training.jsonl",
+                     "GitHub/app/target/debugger/main.rs", "GitHub/app/.gradle/gradle.properties",
+                     "GitHub/app/.yarnrc.yml", "GitHub/app/build/source.swift",
+                     "Documents/temp/report.docx", "GitHub/app/tmp/notes.md"] {
+            try expect(!filter.isExcluded(relativePath: path), "Do not invent exclusions for real data: \(path)")
+        }
+    }
+
+    func test_nestedMultiComponentPatterns() throws {
+        let filter = ExcludeFilter(patterns: [".git/objects", "custom/cache"])
+        try expect(filter.isExcluded(relativePath: "GitHub/app/.git/objects/pack/data"), "Nested configured paths must match")
+        try expect(filter.shouldSkipDirectory(relativePath: "GitHub/app/custom/cache"), "Nested directories must be pruned")
+        try expect(!filter.isExcluded(relativePath: "GitHub/app/custom/cache-source/main.swift"), "Respect component boundaries")
+    }
+
     func test_wildcardStar() throws {
         try expect(ExcludeFilter.globMatch(pattern: "*.tmp", text: "file.tmp"), "*.tmp should match file.tmp")
         try expect(ExcludeFilter.globMatch(pattern: "*.tmp", text: "report.tmp"), "*.tmp should match report.tmp")

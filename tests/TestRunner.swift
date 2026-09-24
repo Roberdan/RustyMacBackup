@@ -5,6 +5,8 @@ typealias TestClosure = () throws -> Void
 @main
 struct TestRunner {
     static func main() {
+        Log.logURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rmb-tests-\(ProcessInfo.processInfo.processIdentifier).log")
         var passed = 0
         var failed = 0
         var failedNames: [String] = []
@@ -18,8 +20,20 @@ struct TestRunner {
         let scanner = FileScannerTests()
         let hidden = HiddenDiscoveryTests()
         let tree = TreeSelectionTests()
+        let cleanup = SnapshotCleanupTests()
 
         let suites: [(String, TestClosure)] = [
+            ("Cleanup.ageBoundaries", cleanup.test_ageBoundariesAndPreview),
+            ("Cleanup.onlySnapshots", cleanup.test_latestAndNonSnapshotsSurvive),
+            ("Cleanup.hardLinks", cleanup.test_hardLinksAndOriginalSurvive),
+            ("Cleanup.lockAndCancel", cleanup.test_lockAndCancellation),
+            ("Cleanup.legacyAndDestination", cleanup.test_legacyLockAndInvalidDestination),
+            ("Cleanup.failures", cleanup.test_changedPreviewAndDeletionFailure),
+            ("Cleanup.emptyAndSingle", cleanup.test_emptyAndSingleBackup),
+            ("Cleanup.cliOptions", cleanup.test_cliOptions),
+            ("ExcludeFilter.mandatoryCaches", exclude.test_mandatoryCachesWithOldConfig),
+            ("ExcludeFilter.nestedPaths", exclude.test_nestedMultiComponentPatterns),
+            ("FileScanner.explicitExclusions", scanner.test_explicitSourcesCannotBypassExclusions),
             ("ExcludeFilter.wildcardStar", exclude.test_wildcardStar),
             ("ExcludeFilter.wildcardQuestion", exclude.test_wildcardQuestion),
             ("ExcludeFilter.componentMatch", exclude.test_componentMatch),

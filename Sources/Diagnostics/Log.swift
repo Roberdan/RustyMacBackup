@@ -8,7 +8,8 @@ enum Log {
     private static let osLog = OSLog(subsystem: "com.roberdan.rusty-mac-backup", category: "app")
     private static let maxLogSize: UInt64 = 1_048_576 // 1 MB
 
-    private static var logURL: URL = {
+    /// Overridable so tests never write fake entries into the user's real log.
+    static var logURL: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/share/rusty-mac-backup")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
