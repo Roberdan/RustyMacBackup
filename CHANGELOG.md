@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.6.0] - 2026-09-24
+
+### Added
+- **Pulisci vecchi backup…** in the menu and `prune --older-than 1m|6m|1y` in the CLI:
+  one-time manual cleanup with a preview (destination, cutoff date, count, free space)
+  and explicit confirmation. The CLI previews unless `--yes` is given. After deletion the
+  space actually freed is reported, measured on the disk (hard-linked data shared with kept
+  snapshots frees nothing). The most recent snapshot is always kept.
+- Backup, restore and cleanup share a destination lock; interrupted deletions stay in a
+  hidden `.deleting-*` folder instead of looking like a valid snapshot.
+- Known regenerable caches (`node_modules`, `.venv`, `__pycache__`, `DerivedData`,
+  `target/debug`, …) are always excluded, also with old configs and explicit sources.
+
+### Fixed
+- Multi-component exclusions (e.g. `.git/objects`) now match inside nested repositories.
+
 ## [2.5.1] - 2026-09-22
 
 ### Changed

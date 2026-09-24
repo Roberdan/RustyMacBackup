@@ -156,7 +156,8 @@ rustyback list
 ### Freeing backup disk space
 
 In the menu-bar app, choose **Pulisci vecchi backup…**, then **1 mese**, **6 mesi**
-or **1 anno**. The preview shows the destination, cutoff date and number of snapshots.
+or **1 anno**. The preview shows the destination, current free space, cutoff date and number
+of snapshots. After deletion it reports the space actually freed, measured on the disk.
 Nothing is deleted until you confirm **Elimina backup**; **Annulla** keeps everything.
 This is a one-time cleanup, not a change to your scheduled retention policy.
 The most recent snapshot is always kept, even if it is older than the selected period.

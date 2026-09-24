@@ -19,6 +19,13 @@ enum CleanupAge: Int, CaseIterable {
     }
 }
 
+struct CleanupResult {
+    let deleted: [String]
+    /// Measured free-space gain on the volume; shared hard-linked data frees nothing.
+    let freedBytes: UInt64
+    let freeAfterBytes: UInt64
+}
+
 /// Holds the destination lock from preview until cancellation or execution.
 final class SnapshotCleanup {
     let destination: URL
@@ -39,7 +46,9 @@ final class SnapshotCleanup {
         self.lock = lock
     }
 
-    func execute() throws -> [String] {
+    var freeBytes: UInt64 { BackupEngine.diskFreeSpace(at: destination.path) }
+
+    func execute() throws -> CleanupResult {
         try withExtendedLifetime(lock) {
             try RetentionManager.validateDestination(destination)
             let current = try RetentionManager.readBackups(at: destination)
@@ -49,7 +58,11 @@ final class SnapshotCleanup {
                     NSLocalizedDescriptionKey: "I backup sono cambiati. Ripeti l'anteprima prima di eliminare."
                 ])
             }
-            return try RetentionManager.deleteBackups(candidates, at: destination)
+            let before = freeBytes
+            let deleted = try RetentionManager.deleteBackups(candidates, at: destination)
+            let after = freeBytes
+            return CleanupResult(deleted: deleted, freedBytes: after > before ? after - before : 0,
+                                 freeAfterBytes: after)
         }
     }
 }

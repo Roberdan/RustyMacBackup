@@ -231,6 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let more = cleanup.candidates.count > 5 ? "\n… e altri \(cleanup.candidates.count - 5)" : ""
                     alert.informativeText = """
                     Disco: \(destination.path)
+                    Spazio libero ora: \(BackupEngine.formatBytes(cleanup.freeBytes))
                     Più vecchi di \(age.label), prima del \(cleanup.cutoff.formatted(date: .abbreviated, time: .shortened)).
 
                     \(examples)\(more)
@@ -248,9 +249,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     DispatchQueue.global(qos: .utility).async {
                         do {
-                            let deleted = try cleanup.execute()
+                            let result = try cleanup.execute()
+                            let freed = BackupEngine.formatBytes(result.freedBytes)
+                            let free = BackupEngine.formatBytes(result.freeAfterBytes)
                             DispatchQueue.main.async {
-                                self.finishCleanup(message: "Eliminati \(deleted.count) vecchi backup. Ultimo backup conservato.")
+                                self.finishCleanup(message: "Eliminati \(result.deleted.count) vecchi backup. "
+                                    + "Spazio liberato: \(freed). Spazio libero ora: \(free). Ultimo backup conservato.")
                             }
                         } catch {
                             DispatchQueue.main.async {

@@ -249,8 +249,16 @@ enum CLIHandler {
             print("Destination: \(destination.path)")
             print("Before: \(cleanup.cutoff.formatted(date: .abbreviated, time: .standard))")
             print("Latest snapshot is always kept. Shared hard-linked data may not free space.")
+            print("Free space: \(BackupEngine.formatBytes(cleanup.freeBytes))")
             for entry in cleanup.candidates { print("  \(entry.name)") }
-            pruned = dryRun ? cleanup.candidates.map(\.name) : try cleanup.execute()
+            if dryRun {
+                pruned = cleanup.candidates.map(\.name)
+            } else {
+                let result = try cleanup.execute()
+                pruned = result.deleted
+                print("Freed: \(BackupEngine.formatBytes(result.freedBytes)) "
+                      + "(free now: \(BackupEngine.formatBytes(result.freeAfterBytes)))")
+            }
         } else {
             pruned = try RetentionManager.pruneBackups(
                 at: destination, policy: cfg.retention, dryRun: dryRun)

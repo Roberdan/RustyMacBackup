@@ -57,7 +57,7 @@ final class SnapshotCleanupTests {
         try "not a directory".write(to: root.appendingPathComponent("2023-02-01_000000"), atomically: true, encoding: .utf8)
         let cleanup = try SnapshotCleanup(at: root, age: .oneMonth, now: date("2026-09-24_120000"))
         try expectEqual(cleanup.candidates.map(\.name), ["2024-01-01_000000"], "Only real dated directories may be deleted")
-        let deleted = try cleanup.execute()
+        let deleted = try cleanup.execute().deleted
         try expectEqual(deleted, ["2024-01-01_000000"], "Delete exactly the preview")
         for name in ["2024-02-01_000000", "in-progress-2023-01-01_000000", "notes",
                      "2024-02-30_000000", "2023-01-01_000000", "2023-02-01_000000"] {
@@ -135,12 +135,13 @@ final class SnapshotCleanupTests {
         defer { try? fm.removeItem(at: root) }
         do {
             let cleanup = try SnapshotCleanup(at: root, age: .oneMonth)
-            let deleted = try cleanup.execute()
-            try expectEqual(deleted, [], "Empty destination should be a no-op")
+            let result = try cleanup.execute()
+            try expectEqual(result.deleted, [], "Empty destination should be a no-op")
+            try expectEqual(result.freedBytes, 0, "Nothing deleted, nothing reported as freed")
         }
         try fm.createDirectory(at: root.appendingPathComponent("2020-01-01_000000"), withIntermediateDirectories: true)
         let cleanup = try SnapshotCleanup(at: root, age: .oneMonth)
-        let deleted = try cleanup.execute()
+        let deleted = try cleanup.execute().deleted
         try expectEqual(deleted, [], "Even an ancient single snapshot must be kept")
     }
 
