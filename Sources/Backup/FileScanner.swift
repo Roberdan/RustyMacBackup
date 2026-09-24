@@ -33,6 +33,9 @@ enum FileScanner {
             // e.g. ~/GitHub/MyRepo/file.swift → "GitHub/MyRepo/file.swift" (not "file.swift")
             let basePath = basePaths[index].hasSuffix("/") ? basePaths[index] : basePaths[index] + "/"
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
+            let sourceRelativePath = source.path.hasPrefix(basePath)
+                ? String(source.path.dropFirst(basePath.count)) : source.path
+            guard !excludeFilter.isExcluded(relativePath: sourceRelativePath) else { continue }
 
             // Check if source is a single file (not a directory)
             var isDir: ObjCBool = false

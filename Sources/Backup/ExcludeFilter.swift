@@ -1,6 +1,20 @@
 import Foundation
 
 struct ExcludeFilter {
+    /// Enforced even with an old or empty config; avoid broad data/source extensions.
+    static let mandatoryPatterns = [
+        ".DS_Store", ".Trash", ".Trashes", ".TemporaryItems",
+        "node_modules", ".next", ".nuxt", ".svelte-kit",
+        ".cache", ".parcel-cache", ".turbo", ".npm", ".pnpm-store",
+        ".yarn/cache", ".yarn/unplugged",
+        "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        ".venv", ".tox", ".nox", "*.pyc", "*.pyo",
+        ".build", "DerivedData", "build/intermediates", "target/debug", "target/release",
+        ".gradle/caches", ".gradle/daemon", ".gradle/workers",
+        "Caches", "GPUCache", "ShaderCache", "Code Cache",
+        "*.tmp", "*.temp", "*.swp", "*.swo", "*~",
+    ]
+
     let patterns: [String]
 
     /// Single-component literal patterns ("node_modules", "logs"). Matching these is a
@@ -11,10 +25,11 @@ struct ExcludeFilter {
     private let complexPatterns: [String]
 
     init(patterns: [String]) {
-        self.patterns = patterns
+        let effective = Array(Set(patterns + Self.mandatoryPatterns)).sorted()
+        self.patterns = effective
         var literals: Set<String> = []
         var complex: [String] = []
-        for raw in patterns {
+        for raw in effective {
             let pattern = Self.normalizePath(raw)
             if pattern.isEmpty { continue }
             if !Self.hasWildcards(pattern) && !pattern.contains("/") {
@@ -175,10 +190,12 @@ struct ExcludeFilter {
             return false
         }
 
-        for (p, t) in zip(patternComponents, pathComponents) where !globMatch(pattern: p, text: t) {
-            return false
+        for start in 0...(pathComponents.count - patternComponents.count) {
+            let slice = pathComponents[start..<(start + patternComponents.count)]
+            if zip(patternComponents, slice).allSatisfy({ globMatch(pattern: $0.0, text: $0.1) }) {
+                return true
+            }
         }
-
-        return true
+        return false
     }
 }

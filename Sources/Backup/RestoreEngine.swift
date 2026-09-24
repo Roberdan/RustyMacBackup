@@ -120,6 +120,15 @@ enum RestoreEngine {
         let home = fm.homeDirectoryForCurrentUser.path
         let backupDir = preRestoreBackupDir()
         var result = RestoreResult()
+        let operationLock: DestinationLock
+        do {
+            operationLock = try DestinationLock(at: snapshotURL.deletingLastPathComponent())
+        } catch {
+            Log.error("Restore blocked: \(error.localizedDescription)")
+            result.failed = items.count
+            return result
+        }
+        defer { withExtendedLifetime(operationLock) {} }
         result.backedUpTo = backupDir.path
         let total = items.count
         var didBackup = false

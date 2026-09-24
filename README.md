@@ -141,7 +141,8 @@ rustyback list
 | `stop` | Cancel a running backup |
 | `status` | Live status, last result, folder list |
 | `list` | List snapshots on disk |
-| `prune [--dry-run]` | Remove old snapshots per retention policy |
+| `prune [--dry-run \| --yes]` | Preview retention-policy cleanup; `--yes` deletes |
+| `prune --older-than 1m\|6m\|1y [--dry-run \| --yes]` | Preview/delete snapshots older than 1 month, 6 months or 1 year |
 | `restore <snapshot> [path] --to <dest>` | Restore files from a snapshot |
 | `config show\|add\|remove\|edit` | Manage backed-up paths |
 | `schedule on\|off\|interval <min>\|daily <hour>` | Manage LaunchAgent schedule |
@@ -151,6 +152,56 @@ rustyback list
 ---
 
 ## Configuration
+
+### Freeing backup disk space
+
+In the menu-bar app, choose **Pulisci vecchi backup…**, then **1 mese**, **6 mesi**
+or **1 anno**. The preview shows the destination, cutoff date and number of snapshots.
+Nothing is deleted until you confirm **Elimina backup**; **Annulla** keeps everything.
+This is a one-time cleanup, not a change to your scheduled retention policy.
+The most recent snapshot is always kept, even if it is older than the selected period.
+
+The same operation is available from the CLI:
+
+```bash
+rustyback prune --older-than 6m           # preview only
+rustyback prune --older-than 6m --yes     # permanently delete after reviewing
+```
+
+Age refers to the snapshot date, not the modification dates of files inside it.
+Periods use calendar months; snapshots exactly on the cutoff are retained.
+Cleanup only removes complete, timestamp-named snapshot directories in the configured
+destination, never source files, in-progress backups, symbolic links or unrelated folders.
+Backup, restore and cleanup share a destination lock to prevent concurrent deletion.
+Failures are reported rather than counted as successful removals. If a removal is interrupted,
+its remaining files stay in a hidden `.deleting-*` directory, not a restorable snapshot;
+the error includes that path for recovery. This operation does not empty those remnants.
+
+**Space freed is not the sum of snapshot sizes:** unchanged files are hard-linked.
+Their space is recovered only after the last snapshot referencing them is removed.
+Cache data already in retained snapshots is left intact; exclusions apply to future backups.
+
+### Cache and temporary-file exclusions
+
+Known regenerable caches and temporary files are **always excluded**, including for old
+configurations with an empty `[exclude]` list and explicitly selected source files/folders.
+These include `node_modules`, `.next`, `.nuxt`, `.svelte-kit`, `.cache`, `.parcel-cache`,
+`.turbo`, `.npm`, `.pnpm-store`, `.yarn/cache`, `.yarn/unplugged`, Python bytecode and
+test/type-checker caches, `.venv`, `.tox`, `.nox`, Swift `.build`/`DerivedData`,
+Rust `target/debug` and `target/release`, Android `build/intermediates`, Gradle runtime
+caches, macOS cache folders, `tmp`, `temp`, `*.tmp`, `*.temp`, editor swap/backup files.
+Multi-component exclusions work inside nested repositories too.
+
+Your configured exclusions are added to this mandatory set. The mandatory rules do not
+exclude source files merely because their names contain "cache" or "temp", nor do they
+exclude `.env`, dependency lockfiles, databases, `.jsonl`, or Git history by themselves.
+Existing configured/default exclusions still apply (including broader data/Git exclusions).
+Generic folders named `tmp` or `temp` are *not* excluded automatically, because outside
+repositories they can hold real work; add them to `[exclude]` if they are disposable.
+Custom cache locations need an explicit pattern: the app cannot infer every tool's temporary
+files, and deliberately does not apply all `.gitignore` rules, which may hide valuable local data.
+
+### Configuration file
 
 Config lives at `~/.config/rusty-mac-backup/config.toml` and is created by `rustyback init`. You can also edit it directly.
 

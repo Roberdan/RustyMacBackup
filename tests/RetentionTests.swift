@@ -18,7 +18,7 @@ final class RetentionTests {
 
         try FileManager.default.createDirectory(at: tmp.appendingPathComponent("2026-03-19_140000"), withIntermediateDirectories: true)
         let policy = RetentionConfig(hourly: 0, daily: 0, weekly: 0, monthly: 0)
-        let pruned = RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
+        let pruned = try RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
         try expectEqual(pruned.count, 0, "Single backup should never be pruned")
     }
 
@@ -31,7 +31,7 @@ final class RetentionTests {
             .forEach { try? FileManager.default.createDirectory(at: tmp.appendingPathComponent($0), withIntermediateDirectories: true) }
 
         let policy = RetentionConfig(hourly: 2, daily: 0, weekly: 0, monthly: 0)
-        let pruned = RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
+        let pruned = try RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
         try expect(pruned.count >= 2, "Should prune at least 2 old hourly backups")
     }
 
@@ -45,10 +45,10 @@ final class RetentionTests {
         }
 
         let policy = RetentionConfig(hourly: 1, daily: 1, weekly: 1, monthly: 1)
-        _ = RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
+        _ = try RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
 
         let remaining = try FileManager.default.contentsOfDirectory(atPath: tmp.path)
-        try expectEqual(remaining.count, 3, "Dry run should not delete anything")
+        try expectEqual(remaining.filter { !$0.hasPrefix(".") }.count, 3, "Dry run should not delete anything")
     }
 
     func test_monthlyForever() throws {
@@ -62,7 +62,7 @@ final class RetentionTests {
         }
 
         let policy = RetentionConfig(hourly: 0, daily: 0, weekly: 0, monthly: 0)
-        let pruned = RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
+        let pruned = try RetentionManager.pruneBackups(at: tmp, policy: policy, dryRun: true)
         try expectEqual(pruned.count, 0, "monthly=0 should keep one per month forever")
     }
 }

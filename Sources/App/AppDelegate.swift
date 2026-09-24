@@ -67,6 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         uiState.onRequestUpdate = { [weak self] in self?.handleRequestUpdate() }
         uiState.onSetSchedule = { [weak self] option in self?.handleSetSchedule(option) }
         uiState.onRequestScheduleMenu = { [weak self] in self?.handleRequestScheduleMenu() }
+        uiState.onRequestCleanup = { [weak self] age in self?.handleRequestCleanup(age) }
         refreshScheduleLabel()
     }
 
@@ -208,7 +209,80 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Action handlers
 
+    private func handleRequestCleanup(_ age: CleanupAge) {
+        guard let config, !uiState.isRunning, !uiState.isCleaning else { return }
+        let destination = URL(fileURLWithPath: config.destination.path)
+        uiState.isCleaning = true
+        uiState.cleanupMessage = nil
+        popover.performClose(nil)
+
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let cleanup = try SnapshotCleanup(at: destination, age: age)
+                DispatchQueue.main.async {
+                    guard !cleanup.candidates.isEmpty else {
+                        self.finishCleanup(message: "Nessun backup più vecchio di \(age.label) da eliminare.")
+                        return
+                    }
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "Eliminare \(cleanup.candidates.count) vecchi backup?"
+                    let examples = cleanup.candidates.prefix(5).map(\.name).joined(separator: "\n")
+                    let more = cleanup.candidates.count > 5 ? "\n… e altri \(cleanup.candidates.count - 5)" : ""
+                    alert.informativeText = """
+                    Disco: \(destination.path)
+                    Più vecchi di \(age.label), prima del \(cleanup.cutoff.formatted(date: .abbreviated, time: .shortened)).
+
+                    \(examples)\(more)
+
+                    L'ultimo backup viene sempre conservato. I file originali non vengono toccati.
+                    L'eliminazione è definitiva. I file condivisi con altri backup liberano spazio solo quando non servono più a nessuno.
+                    """
+                    alert.addButton(withTitle: "Annulla")
+                    alert.addButton(withTitle: "Elimina backup")
+                    alert.buttons[1].hasDestructiveAction = true
+                    NSApp.activate(ignoringOtherApps: true)
+                    guard alert.runModal() == .alertSecondButtonReturn else {
+                        self.uiState.isCleaning = false
+                        return
+                    }
+                    DispatchQueue.global(qos: .utility).async {
+                        do {
+                            let deleted = try cleanup.execute()
+                            DispatchQueue.main.async {
+                                self.finishCleanup(message: "Eliminati \(deleted.count) vecchi backup. Ultimo backup conservato.")
+                            }
+                        } catch {
+                            DispatchQueue.main.async {
+                                self.finishCleanup(message: error.localizedDescription, failed: true)
+                            }
+                        }
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.finishCleanup(message: error.localizedDescription, failed: true)
+                }
+            }
+        }
+    }
+
+    private func finishCleanup(message: String, failed: Bool = false) {
+        uiState.isCleaning = false
+        uiState.cleanupMessage = message
+        if failed { Log.error("Cleanup failed: \(message)") }
+        pollStatus()
+        let alert = NSAlert()
+        alert.alertStyle = failed ? .warning : .informational
+        alert.messageText = failed ? "Pulizia non completata" : "Pulizia backup"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
     private func handleRequestBackup() {
+        guard !uiState.isCleaning else { return }
         guard let config = config else { return }
         popover.performClose(nil)
 
@@ -228,6 +302,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleRequestRestore() {
+        guard !uiState.isCleaning else { return }
         let backups = RestoreEngine.findBackupSnapshots()
         guard let first = backups.first, !first.snapshots.isEmpty else { return }
         popover.performClose(nil)
@@ -271,6 +346,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startBackup(selectedPaths: [String], includeRightsManagedFiles: Bool) {
+        guard !uiState.isCleaning else { return }
         guard var pending = config else { return }
         pending.source.paths = selectedPaths
         pending.protection.includeRightsManagedFiles = includeRightsManagedFiles
@@ -324,6 +400,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleEject() {
+        guard !uiState.isCleaning else { return }
         guard let config = config else { return }
         let volumePath = URL(fileURLWithPath: config.destination.path).deletingLastPathComponent()
         let volumeName = volumePath.lastPathComponent
@@ -378,6 +455,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRestore(snapshotURL: URL, items: [String], brewInstall: Bool, overrides: [String: String] = [:]) {
+        guard !uiState.isCleaning else { return }
         // F-10: Preflight free-space check (payload × 2 to account for pre-restore backup copy)
         let estimate = RestoreEngine.estimateRestoreSize(snapshotURL: snapshotURL, items: items)
         let required = estimate * 2

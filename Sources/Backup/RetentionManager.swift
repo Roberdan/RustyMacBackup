@@ -11,6 +11,7 @@ enum RetentionManager {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HHmmss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.isLenient = false
         return formatter
     }()
 
@@ -18,31 +19,50 @@ enum RetentionManager {
     /// Format: YYYY-MM-DD_HHMMSS (17 chars)
     static func parseBackupName(_ name: String) -> Date? {
         guard name.count == 17 else { return nil }
-        return formatter.date(from: name)
+        guard let date = formatter.date(from: name),
+              formatter.string(from: date) == name else { return nil }
+        return date
     }
 
     /// List all backup snapshots at destination, sorted newest first.
     static func listBackups(at destination: URL) -> [BackupEntry] {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: destination,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+        do {
+            return try readBackups(at: destination)
+        } catch {
+            Log.error("Cannot list backups at \(destination.path): \(error.localizedDescription)")
+            return []
+        }
+    }
 
-        return contents.compactMap { url -> BackupEntry? in
+    static func readBackups(at destination: URL) throws -> [BackupEntry] {
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: destination,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        return try contents.compactMap { url -> BackupEntry? in
             let name = url.lastPathComponent
-            guard !name.hasPrefix("in-progress-") else { return nil }
-            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]),
-                  values.isDirectory == true else { return nil }
             guard let timestamp = parseBackupName(name) else { return nil }
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else { return nil }
             return BackupEntry(name: name, timestamp: timestamp, url: url)
         }.sorted { $0.timestamp > $1.timestamp }
     }
 
     /// Prune backups according to retention policy.
     /// Returns list of pruned backup names.
-    static func pruneBackups(at destination: URL, policy: RetentionConfig, dryRun: Bool) -> [String] {
-        let backups = listBackups(at: destination)
+    static func pruneBackups(at destination: URL, policy: RetentionConfig, dryRun: Bool) throws -> [String] {
+        try validateDestination(destination)
+        let lock = try DestinationLock(at: destination)
+        return try withExtendedLifetime(lock) {
+            try pruneLockedBackups(at: destination, policy: policy, dryRun: dryRun)
+        }
+    }
+
+    /// Caller must hold the destination lock (backup also prunes when space is low).
+    static func pruneLockedBackups(at destination: URL, policy: RetentionConfig, dryRun: Bool) throws -> [String] {
+        let backups = try readBackups(at: destination)
         guard backups.count > 1 else { return [] } // Always keep at least one
 
         var keep = Set<String>()
@@ -71,17 +91,48 @@ enum RetentionManager {
             }
         }
 
-        var pruned: [String] = []
-        for backup in backups where !keep.contains(backup.name) {
-            if dryRun {
-                print("  Would prune: \(backup.name)")
-            } else {
-                try? FileManager.default.removeItem(at: backup.url)
-                print("  Pruned: \(backup.name)")
-            }
-            pruned.append(backup.name)
+        let candidates = backups.filter { !keep.contains($0.name) }
+        if dryRun {
+            for backup in candidates { print("  Would prune: \(backup.name)") }
+            return candidates.map(\.name)
         }
-        return pruned
+        return try deleteBackups(candidates, at: destination)
+    }
+
+    static func validateDestination(_ destination: URL) throws {
+        guard BackupEngine.isVolumeReallyMounted(destination.path) else {
+            throw BackupError.volumeNotMounted(destination.path)
+        }
+        let values = try destination.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw BackupError.notWritable(destination.path)
+        }
+    }
+
+    static func deleteBackups(_ backups: [BackupEntry], at destination: URL) throws -> [String] {
+        var removed: [String] = []
+        for backup in backups {
+            let staged = destination.appendingPathComponent(".deleting-\(backup.name)-\(UUID().uuidString)")
+            do {
+                let values = try backup.url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard values.isDirectory == true, values.isSymbolicLink != true else {
+                    throw BackupError.notWritable(backup.url.path)
+                }
+                // A failed/partial deletion must never remain a restorable snapshot.
+                try FileManager.default.moveItem(at: backup.url, to: staged)
+                try FileManager.default.removeItem(at: staged)
+                removed.append(backup.name)
+                Log.info("Pruned: \(backup.name)")
+            } catch {
+                throw NSError(domain: "SnapshotCleanup", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Pulizia interrotta dopo \(removed.count) backup eliminati: \(backup.name). "
+                        + "\(error.localizedDescription) Eventuali resti: \(staged.path)",
+                    NSUnderlyingErrorKey: error
+                ])
+            }
+        }
+        return removed
     }
 
     /// Helper: keep one backup per unique slot (hour/day/week/month), up to `count` slots.

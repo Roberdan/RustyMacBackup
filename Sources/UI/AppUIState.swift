@@ -21,6 +21,8 @@ final class AppUIState: ObservableObject {
     @Published var status: BackupStatusFile?
     @Published var config: Config?
     @Published var scheduleLabel: String = "Off"   // human-readable current schedule
+    @Published var isCleaning = false
+    @Published var cleanupMessage: String?
 
     /// Non-nil when a newer version is available on GitHub.
     @Published var updateAvailable: String?
@@ -52,10 +54,11 @@ final class AppUIState: ObservableObject {
     /// nil = disable, >0 = intervalMinutes, <0 = daily at abs(value):00
     var onSetSchedule: ((Int?) -> Void)?
     var onRequestScheduleMenu: (() -> Void)?
+    var onRequestCleanup: ((CleanupAge) -> Void)?
 
     // MARK: - Computed helpers
 
-    var isRunning: Bool { appState == .running || appState == .restoring }
+    var isRunning: Bool { appState == .running || appState == .restoring || appState == .stopping }
 
     // F-19: hasBackups and canUndo are now cached — no disk I/O on SwiftUI render
     var hasBackups: Bool { cachedHasBackups }

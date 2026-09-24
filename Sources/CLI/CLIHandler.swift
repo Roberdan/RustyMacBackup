@@ -68,7 +68,8 @@ enum CLIHandler {
           stop            Stop running backup
           status          Show backup status
           list            List backup snapshots
-          prune           Clean up old backups
+          prune           Clean up old backups (preview unless --yes)
+                          --older-than 1m|6m|1y [--dry-run | --yes]
           restore         Restore from backup
           config          Manage configuration
           schedule        Manage backup schedule
@@ -239,10 +240,23 @@ enum CLIHandler {
 
     private static func runPrune(subArgs: [String], configPath: String?) throws {
         let cfg = try loadConfig(configPath: configPath)
-        let dryRun = subArgs.contains("--dry-run")
-        let pruned = RetentionManager.pruneBackups(
-            at: URL(fileURLWithPath: cfg.destination.path), policy: cfg.retention, dryRun: dryRun)
+        let options = try PruneOptions.parse(subArgs)
+        let dryRun = !options.confirmed
+        let destination = URL(fileURLWithPath: cfg.destination.path)
+        let pruned: [String]
+        if let age = options.age {
+            let cleanup = try SnapshotCleanup(at: destination, age: age)
+            print("Destination: \(destination.path)")
+            print("Before: \(cleanup.cutoff.formatted(date: .abbreviated, time: .standard))")
+            print("Latest snapshot is always kept. Shared hard-linked data may not free space.")
+            for entry in cleanup.candidates { print("  \(entry.name)") }
+            pruned = dryRun ? cleanup.candidates.map(\.name) : try cleanup.execute()
+        } else {
+            pruned = try RetentionManager.pruneBackups(
+                at: destination, policy: cfg.retention, dryRun: dryRun)
+        }
         print(pruned.isEmpty ? green("Nothing to prune.") : "\(dryRun ? "Would prune" : "Pruned") \(pruned.count) backup(s)")
+        if dryRun && !pruned.isEmpty { print("Preview only. Add --yes to permanently delete these snapshots.") }
     }
 
     private static func runList(configPath: String?) throws {
@@ -274,6 +288,8 @@ enum CLIHandler {
 
         let cfg = try loadConfig(configPath: configPath)
         let snapshotURL = URL(fileURLWithPath: cfg.destination.path).appendingPathComponent(snapshot)
+        let operationLock = try DestinationLock(at: URL(fileURLWithPath: cfg.destination.path))
+        defer { withExtendedLifetime(operationLock) {} }
         guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
             throw err("Snapshot not found: \(snapshot)")
         }

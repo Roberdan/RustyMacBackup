@@ -47,11 +47,13 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Primary action — contextual, filled button
             primaryActionButton
+                .disabled(state.isCleaning)
                 .padding(.horizontal, 14)
                 .padding(.top, 10)
                 .padding(.bottom, 4)
             // Secondary actions — always same structure for stable layout
             secondaryActions
+                .disabled(state.isCleaning)
         }
         .padding(.bottom, 4)
     }
@@ -109,6 +111,19 @@ struct PopoverView: View {
                 }
             }
             scheduleRow
+            Menu {
+                ForEach(CleanupAge.allCases, id: \.rawValue) { age in
+                    Button("Più vecchi di \(age.label)…") { state.onRequestCleanup?(age) }
+                }
+            } label: {
+                Label("Pulisci vecchi backup…", systemImage: "trash")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .menuStyle(.borderlessButton)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .disabled(state.isRunning || state.config == nil || state.appState == .diskAbsent)
+            .accessibilityHint("Scegli 1 mese, 6 mesi o 1 anno. Mostra un'anteprima prima di eliminare.")
             Divider().padding(.horizontal, 14).padding(.vertical, 2)
             actionButton("Apri cartella backup", icon: "folder",
                          hint: "Apre la cartella di backup nel Finder") { state.onRequestOpenFolder?() }
@@ -122,6 +137,7 @@ struct PopoverView: View {
     private var contextZone: some View {
         actionButton("Esci", icon: "power",
                      hint: "Chiude RustyMacBackup") { state.onRequestQuit?() }
+            .disabled(state.isCleaning)
             .padding(.vertical, 2)
     }
 
@@ -217,6 +233,17 @@ struct PopoverView: View {
 
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 5) {
+            if state.isCleaning {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Pulizia backup in corso…").font(.subheadline)
+                }
+            }
+            if let message = state.cleanupMessage {
+                Text(message)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(statusText)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
