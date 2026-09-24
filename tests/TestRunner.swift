@@ -5,6 +5,8 @@ typealias TestClosure = () throws -> Void
 @main
 struct TestRunner {
     static func main() {
+        Log.logURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rmb-tests-\(ProcessInfo.processInfo.processIdentifier).log")
         var passed = 0
         var failed = 0
         var failedNames: [String] = []
