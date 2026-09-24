@@ -23,7 +23,7 @@ Read [`CLAUDE.md`](CLAUDE.md). It contains the architecture overview, critical t
 git clone https://github.com/Roberdan/RustyMacBackup.git
 cd RustyMacBackup
 xcode-select --install   # if not already installed
-./run-tests.sh           # should show: 25 tests, 25 passed, 0 failed
+./run-tests.sh           # should show: 55 tests, 55 passed, 0 failed
 ```
 
 No SPM, no Xcode project, no dependencies. Just `swiftc` and the files in `Sources/`.
@@ -41,7 +41,7 @@ No SPM, no Xcode project, no dependencies. Just `swiftc` and the files in `Sourc
 ./run-tests.sh
 ```
 
-All 25 tests must pass. If your change touches `BackupEngine`, `HardLinker`, `FileScanner`, or `RestoreEngine`, add or update the relevant test in `Tests/`.
+All 55 tests must pass. If your change touches `BackupEngine`, `HardLinker`, `FileScanner`, or `RestoreEngine`, add or update the relevant test in `Tests/`.
 
 Tests live in `Tests/` and are compiled + run by `run-tests.sh` (no XCTest — plain Swift assertions).
 
@@ -57,7 +57,7 @@ Tests live in `Tests/` and are compiled + run by `run-tests.sh` (no XCTest — p
 
 1. Fork the repo, create a branch: `git checkout -b fix/describe-the-fix`
 2. Make your changes
-3. Run `./run-tests.sh` — all 25 must pass
+3. Run `./run-tests.sh` — all 55 must pass
 4. Run `./build.sh` — must compile clean (warnings OK, errors not)
 5. Open a PR with a clear description of what changed and why
 

@@ -18,6 +18,7 @@
   **Start Backup**); cleanup shows its real phase (checking, awaiting confirmation,
   deleting) and disabled rows look disabled.
 - Multi-component exclusions (e.g. `.git/objects`) now match inside nested repositories.
+- Unit tests no longer write into the app's real log file.
 
 ## [2.5.1] - 2026-09-22
 

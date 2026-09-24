@@ -10,16 +10,11 @@ Native macOS backup app (Swift, AppKit/SwiftUI). Single `.app` binary that acts 
 
 ```bash
 ./build.sh              # compile + sign → build/RustyMacBackup.app
-./run-tests.sh          # 25 unit tests → build/RustyMacBackupTests
+./run-tests.sh          # 55 unit tests → build/RustyMacBackupTests
 ./build-pkg.sh          # creates .pkg installer
 ```
 
-Version must be set consistently — currently **inconsistent** (P2):
-- `build.sh` defaults `VERSION=2.1.0`
-- `build-pkg.sh` defaults `VERSION=2.0.0`
-- `Sources/CLI/CLIHandler.swift:5` hardcodes `"2.0.0"`
-
-Always update all three together.
+Version is set in one place: `VERSION` default in `build.sh`. `build-pkg.sh` reads it, the release workflow overrides it from the `v*` tag, and the CLI reads `CFBundleShortVersionString` at runtime.
 
 ## Module Map
 
@@ -27,9 +22,9 @@ Always update all three together.
 Sources/
   App/          AppDelegate, main, StatusManager, AutoUpdater, IconManager, MenuBuilder
   Backup/       BackupEngine(+Helpers), HardLinker, FileScanner, RestoreEngine,
-                RetentionManager, ExcludeFilter, EnvironmentSnapshot, StatusModels, BackupTypes
+                RetentionManager, SnapshotCleanup, DestinationLock, ExcludeFilter, EnvironmentSnapshot, StatusModels, BackupTypes
   Config/       ConfigManager, ConfigDiscovery, ScheduleManager
-  CLI/          CLIHandler
+  CLI/          CLIHandler, PruneOptions
   Diagnostics/  Log, ErrorReporter, DiskDiagnostics, FDACheck
   UI/           PopoverView, TreeView, AppUIState, SpeedometerView, ProgressBarView,
                 SnapshotPickerView, DesignTokens, TreeWindowController, PopoverViewController

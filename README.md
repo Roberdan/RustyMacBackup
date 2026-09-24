@@ -302,6 +302,7 @@ Launch the app (no arguments) to get the menu-bar popover:
 │ [    Stop Backup    ]               │  ← red filled button
 │ Ripristina snapshot…                │
 │ Pianificazione: ogni ora            │
+│ Libera spazio…                      │
 │ ─────────────────────────────────── │
 │ Apri cartella backup                │
 │ Espelli disco                       │
@@ -316,6 +317,8 @@ Launch the app (no arguments) to get the menu-bar popover:
 - 🟠 Orange — stopping or backup overdue (>24 h)
 - 🔵 Blue — restore in progress
 - 🔴 Red — last backup failed / disk absent
+
+**Libera spazio…** opens a small menu (older than 1 month / 6 months / 1 year), shows a preview with destination, cutoff date and number of backups, and deletes only after explicit confirmation. The result reports the space actually freed on the disk. See [Freeing backup disk space](#freeing-backup-disk-space).
 
 **After a failed backup**, an error card appears with a localised description, suggested fix, and a direct "Show Log" link to Console.app.
 
@@ -336,10 +339,12 @@ Sources/
 ├── Backup/
 │   ├── BackupEngine.swift      # Core backup loop, lock, TaskGroup workers
 │   ├── BackupEngine+Helpers.swift  # Mount validation, lock format, stale cleanup
+│   ├── DestinationLock.swift   # Shared lock: backup, restore and cleanup never overlap
 │   ├── FileScanner.swift       # Recursive traversal with exclude filter
 │   ├── HardLinker.swift        # Hard-link decision (mtime + size, 1 ms tolerance)
 │   ├── RestoreEngine.swift     # Restore + manifest-based undo
 │   ├── RetentionManager.swift  # Snapshot pruning (hourly/daily/weekly/monthly)
+│   ├── SnapshotCleanup.swift   # Manual cleanup: preview, confirm, measure freed space
 │   └── StatusWriter.swift      # Writes status.json + errors.json to disk
 ├── UI/
 │   ├── PopoverView.swift       # SwiftUI popover (4-zone layout, 320 px)
@@ -350,7 +355,8 @@ Sources/
 │   ├── ConfigDiscovery.swift   # Auto-discovery of dev tool paths
 │   └── ScheduleManager.swift  # LaunchAgent bootstrap/bootout
 ├── CLI/
-│   └── CLIHandler.swift        # All CLI subcommands
+│   ├── CLIHandler.swift        # All CLI subcommands
+│   └── PruneOptions.swift      # `prune --older-than 1m|6m|1y [--yes]` parsing
 └── Diagnostics/
     └── ErrorReporter.swift     # Error taxonomy, localised titles, suggested actions
 ```
@@ -373,17 +379,17 @@ Sources/
 # Build only
 ./build.sh
 
-# Run unit tests (25 tests)
+# Run unit tests (55 tests)
 ./run-tests.sh
 
 # Build distributable .pkg + .app.zip
 ./build-pkg.sh
 
 # Build specific version
-VERSION=2.2.0 ./build-pkg.sh
+VERSION=2.6.0 ./build-pkg.sh
 ```
 
-Tests cover: `ExcludeFilter`, `RetentionManager`, `Config` parsing + round-trip, `BackupEngine` snapshot naming, `HardLinker` mtime logic, and legacy config migration.
+Tests cover: `ExcludeFilter`, `RetentionManager`, `Config` parsing + round-trip, `BackupEngine` snapshot naming, `HardLinker` mtime logic, legacy config migration, manual snapshot cleanup (preview, lock, latest-backup protection, hard-link safety) and mandatory cache exclusions.
 
 ---
 
