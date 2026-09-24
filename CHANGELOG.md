@@ -3,7 +3,7 @@
 ## [2.6.0] - 2026-09-24
 
 ### Added
-- **Pulisci vecchi backup…** in the menu and `prune --older-than 1m|6m|1y` in the CLI:
+- **Libera spazio…** in the menu and `prune --older-than 1m|6m|1y` in the CLI:
   one-time manual cleanup with a preview (destination, cutoff date, count, free space)
   and explicit confirmation. The CLI previews unless `--yes` is given. After deletion the
   space actually freed is reported, measured on the disk (hard-linked data shared with kept
@@ -14,6 +14,9 @@
   `target/debug`, …) are always excluded, also with old configs and explicit sources.
 
 ### Fixed
+- Menu popover resizes with its content (the disk-space line no longer hides under
+  **Start Backup**); cleanup shows its real phase (checking, awaiting confirmation,
+  deleting) and disabled rows look disabled.
 - Multi-component exclusions (e.g. `.git/objects`) now match inside nested repositories.
 
 ## [2.5.1] - 2026-09-22

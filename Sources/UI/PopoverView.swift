@@ -111,19 +111,11 @@ struct PopoverView: View {
                 }
             }
             scheduleRow
-            Menu {
-                ForEach(CleanupAge.allCases, id: \.rawValue) { age in
-                    Button("Più vecchi di \(age.label)…") { state.onRequestCleanup?(age) }
-                }
-            } label: {
-                Label("Pulisci vecchi backup…", systemImage: "trash")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            actionButton("Libera spazio…", icon: "trash",
+                         hint: "Elimina backup più vecchi di 1 mese, 6 mesi o 1 anno, dopo un'anteprima") {
+                state.onRequestCleanupMenu?()
             }
-            .menuStyle(.borderlessButton)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
             .disabled(state.isRunning || state.config == nil || state.appState == .diskAbsent)
-            .accessibilityHint("Scegli 1 mese, 6 mesi o 1 anno. Mostra un'anteprima prima di eliminare.")
             Divider().padding(.horizontal, 14).padding(.vertical, 2)
             actionButton("Apri cartella backup", icon: "folder",
                          hint: "Apre la cartella di backup nel Finder") { state.onRequestOpenFolder?() }
@@ -233,20 +225,17 @@ struct PopoverView: View {
 
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 5) {
-            if state.isCleaning {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Pulizia backup in corso…").font(.subheadline)
+            if let phase = state.cleanupPhase {
+                HStack(spacing: 6) {
+                    if phase.showsProgress { ProgressView().controlSize(.small) }
+                    Text(phase.label).font(.subheadline)
                 }
+                .accessibilityElement(children: .combine)
+            } else {
+                Text(statusText)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
             }
-            if let message = state.cleanupMessage {
-                Text(message)
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text(statusText)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
 
             if let s = state.status, !s.lastCompleted.isEmpty {
                 Text("\(Fmt.timeAgo(from: s.lastCompleted))  ·  \(Fmt.formatFileCount(s.filesTotal)) files  ·  \(Fmt.formatBytes(s.bytesCopied))")
@@ -485,6 +474,7 @@ struct PopoverView: View {
                 .foregroundColor(tint == .primary ? Color(.labelColor) : tint)
         }
         .buttonStyle(.plain)
+        .modifier(DimWhenDisabled())
         .font(.body)
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -548,4 +538,9 @@ struct PopoverView: View {
                 && $0.lastPathComponent != "Macintosh HD" && p.hasPrefix("/Volumes/")
         }
     }
+}
+
+private struct DimWhenDisabled: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    func body(content: Content) -> some View { content.opacity(isEnabled ? 1 : 0.4) }
 }

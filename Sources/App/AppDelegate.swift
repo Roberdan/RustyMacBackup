@@ -67,7 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         uiState.onRequestUpdate = { [weak self] in self?.handleRequestUpdate() }
         uiState.onSetSchedule = { [weak self] option in self?.handleSetSchedule(option) }
         uiState.onRequestScheduleMenu = { [weak self] in self?.handleRequestScheduleMenu() }
-        uiState.onRequestCleanup = { [weak self] age in self?.handleRequestCleanup(age) }
+        uiState.onRequestCleanupMenu = { [weak self] in self?.handleRequestCleanupMenu() }
         refreshScheduleLabel()
     }
 
@@ -209,11 +209,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Action handlers
 
+    private func handleRequestCleanupMenu() {
+        let menu = NSMenu()
+        let header = NSMenuItem(title: "Elimina backup più vecchi di:", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for age in CleanupAge.allCases {
+            let item = NSMenuItem(title: "\(age.label)…", action: #selector(cleanupMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = age.rawValue
+            menu.addItem(item)
+        }
+        if let button = statusItem.button {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.frame.height + 4), in: button)
+        }
+    }
+
+    @objc private func cleanupMenuAction(_ sender: NSMenuItem) {
+        guard let age = CleanupAge(rawValue: sender.tag) else { return }
+        handleRequestCleanup(age)
+    }
+
     private func handleRequestCleanup(_ age: CleanupAge) {
         guard let config, !uiState.isRunning, !uiState.isCleaning else { return }
         let destination = URL(fileURLWithPath: config.destination.path)
-        uiState.isCleaning = true
-        uiState.cleanupMessage = nil
+        uiState.cleanupPhase = .reading
         popover.performClose(nil)
 
         DispatchQueue.global(qos: .utility).async {
@@ -224,6 +244,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         self.finishCleanup(message: "Nessun backup più vecchio di \(age.label) da eliminare.")
                         return
                     }
+                    self.uiState.cleanupPhase = .awaitingConfirmation
                     let alert = NSAlert()
                     alert.alertStyle = .warning
                     alert.messageText = "Eliminare \(cleanup.candidates.count) vecchi backup?"
@@ -244,9 +265,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     alert.buttons[1].hasDestructiveAction = true
                     NSApp.activate(ignoringOtherApps: true)
                     guard alert.runModal() == .alertSecondButtonReturn else {
-                        self.uiState.isCleaning = false
+                        self.uiState.cleanupPhase = nil
                         return
                     }
+                    self.uiState.cleanupPhase = .deleting
                     DispatchQueue.global(qos: .utility).async {
                         do {
                             let result = try cleanup.execute()
@@ -272,8 +294,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func finishCleanup(message: String, failed: Bool = false) {
-        uiState.isCleaning = false
-        uiState.cleanupMessage = message
+        uiState.cleanupPhase = nil
         if failed { Log.error("Cleanup failed: \(message)") }
         pollStatus()
         let alert = NSAlert()
